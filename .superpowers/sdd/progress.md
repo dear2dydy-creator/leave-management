@@ -9,10 +9,10 @@
 - [x] Task 4: 지각 처리 로직 (TDD) (commits: cb7d6ca, review clean — 21/21 pass)
   Minor: absence on period boundary semantics — clarify with business later
 - [x] Task 5: Employee CRUD API (commit: f8862a8, review clean)
-- [ ] Task 6: 대시보드 & 직원 페이지 UI
-- [ ] Task 7: 휴가 기록 CRUD
-- [ ] Task 8: 지각 기록
-- [ ] Task 9: 달력 뷰
-- [ ] Task 10: 엑셀 내보내기
+- [x] Task 6: 대시보드 & 직원 페이지 UI (commits: 4686572..b310603, fix: edit page added)
+- [x] Task 7: 휴가 기록 CRUD (commit: 0045e35, fix: 5c5866b error handling)
+- [x] Task 8: 지각 기록 (commit: 0045e35, fix: 5c5866b error handling)
+- [x] Task 9: 달력 뷰 (commit: 0c81d72, review clean)
+- [x] Task 10: 엑셀 내보내기 (commit: 8f79a26, review clean)
 - [ ] Task 11: 관리자 설정
 - [ ] Task 12: Vercel 배포

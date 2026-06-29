@@ -1,0 +1,224 @@
+﻿8f79a26 feat: Excel export endpoint with two department sheets
+
+ app/api/export/route.ts |  80 ++++++++++++++++++++++++++++++
+ lib/excel-export.ts     | 126 ++++++++++++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 206 insertions(+)
+
+diff --git a/app/api/export/route.ts b/app/api/export/route.ts
+new file mode 100644
+index 0000000..ba7f277
+--- /dev/null
++++ b/app/api/export/route.ts
+@@ -0,0 +1,80 @@
++import { NextResponse } from 'next/server'
++import { getServerSession } from 'next-auth'
++import { authOptions } from '@/lib/auth'
++import { db } from '@/lib/db'
++import { calculateAnnualLeave, calculateMonthlyLeave, getCurrentPeriod } from '@/lib/leave-calculator'
++import { buildExcel } from '@/lib/excel-export'
++import { Department } from '@prisma/client'
++
++export async function GET() {
++  const session = await getServerSession(authOptions)
++  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
++
++  const employees = await db.employee.findMany({
++    orderBy: { name: 'asc' },
++    include: {
++      leaveBalances: true,
++      leaveRecords: { orderBy: { startDate: 'asc' } },
++    },
++  })
++
++  const today = new Date()
++
++  const data = employees.map(emp => {
++    const { start, end } = getCurrentPeriod(emp.hireDate, today)
++    const balance = emp.leaveBalances.find(
++      b => b.periodStart.getTime() === start.getTime()
++    )
++
++    const absenceDates = emp.leaveRecords
++      .filter(r => r.category === 'ABSENCE')
++      .map(r => r.startDate)
++
++    const allocatedDays =
++      balance?.allocatedDaysOverride ??
++      (emp.department === Department.SALES_SUPPORT
++        ? calculateAnnualLeave(emp.hireDate, today)
++        : calculateMonthlyLeave(start, absenceDates, today))
++
++    const usedDays = emp.leaveRecords
++      .filter(
++        r =>
++          ['ANNUAL', 'MONTHLY', 'HALF'].includes(r.category) &&
++          r.startDate >= start &&
++          r.startDate < end
++      )
++      .reduce((sum, r) => sum + r.days, 0)
++
++    return {
++      id: emp.id,
++      name: emp.name,
++      company: emp.company,
++      department: emp.department,
++      position: emp.position,
++      hireDate: emp.hireDate,
++      terminationDate: emp.terminationDate,
++      periodStart: start,
++      periodEnd: end,
++      allocatedDays,
++      bonusDays: balance?.bonusDays ?? 0,
++      deductionDays: balance?.deductionDays ?? 0,
++      usedDays,
++      remainingDays:
++        allocatedDays +
++        (balance?.bonusDays ?? 0) -
++        (balance?.deductionDays ?? 0) -
++        usedDays,
++    }
++  })
++
++  const buffer = await buildExcel(data)
++  const dateStr = today.toISOString().slice(0, 10)
++
++  return new NextResponse(buffer, {
++    headers: {
++      'Content-Type':
++        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
++      'Content-Disposition': `attachment; filename="leave-report-${dateStr}.xlsx"`,
++    },
++  })
++}
+diff --git a/lib/excel-export.ts b/lib/excel-export.ts
+new file mode 100644
+index 0000000..12bbe82
+--- /dev/null
++++ b/lib/excel-export.ts
+@@ -0,0 +1,126 @@
++import ExcelJS from 'exceljs'
++
++const COMPANY_LABEL: Record<string, string> = {
++  SKYCAMP: '스카이캠프',
++  SKYAN: '스카이앤',
++}
++
++const DEPT_LABEL: Record<string, string> = {
++  SALES: '영업부',
++  SALES_SUPPORT: '영업지원부',
++}
++
++function formatDate(date: Date): string {
++  const y = date.getFullYear()
++  const m = String(date.getMonth() + 1).padStart(2, '0')
++  const d = String(date.getDate()).padStart(2, '0')
++  return `${y}.${m}.${d}`
++}
++
++function formatPeriod(start: Date, end: Date): string {
++  return `${formatDate(start)} ~ ${formatDate(end)}`
++}
++
++interface EmployeeExportData {
++  id: string
++  name: string
++  company: string
++  department: string
++  position: string
++  hireDate: Date
++  terminationDate: Date | null
++  periodStart: Date
++  periodEnd: Date
++  allocatedDays: number
++  bonusDays: number
++  deductionDays: number
++  usedDays: number
++  remainingDays: number
++}
++
++function applyHeaderStyle(row: ExcelJS.Row) {
++  row.font = { bold: true }
++  row.fill = {
++    type: 'pattern',
++    pattern: 'solid',
++    fgColor: { argb: 'FFCCCCCC' },
++  }
++  row.alignment = { vertical: 'middle', horizontal: 'center' }
++}
++
++function buildDepartmentSheet(
++  wb: ExcelJS.Workbook,
++  sheetName: string,
++  employees: EmployeeExportData[],
++  allocatedLabel: string
++) {
++  const ws = wb.addWorksheet(sheetName)
++
++  // Column definitions
++  ws.columns = [
++    { key: 'name', width: 12 },
++    { key: 'company', width: 12 },
++    { key: 'department', width: 14 },
++    { key: 'position', width: 10 },
++    { key: 'hireDate', width: 12 },
++    { key: 'period', width: 24 },
++    { key: 'allocated', width: 10 },
++    { key: 'bonus', width: 8 },
++    { key: 'deduction', width: 8 },
++    { key: 'used', width: 8 },
++    { key: 'remaining', width: 8 },
++  ]
++
++  // Header row
++  const headerRow = ws.addRow([
++    '이름',
++    '회사',
++    '부서',
++    '직급',
++    '입사일',
++    '이번 기간',
++    allocatedLabel,
++    '추가',
++    '공제',
++    '사용',
++    '잔여',
++  ])
++  applyHeaderStyle(headerRow)
++
++  // Data rows
++  employees.forEach(emp => {
++    const row = ws.addRow([
++      emp.name,
++      COMPANY_LABEL[emp.company] ?? emp.company,
++      DEPT_LABEL[emp.department] ?? emp.department,
++      emp.position,
++      formatDate(new Date(emp.hireDate)),
++      formatPeriod(new Date(emp.periodStart), new Date(emp.periodEnd)),
++      emp.allocatedDays,
++      emp.bonusDays,
++      emp.deductionDays,
++      emp.usedDays,
++      emp.remainingDays,
++    ])
++
++    // Right-align numeric columns (7-11, 1-indexed)
++    ;[7, 8, 9, 10, 11].forEach(col => {
++      const cell = row.getCell(col)
++      cell.alignment = { horizontal: 'right' }
++    })
++  })
++}
++
++export async function buildExcel(employees: EmployeeExportData[]): Promise<ArrayBuffer> {
++  const wb = new ExcelJS.Workbook()
++  wb.creator = 'Leave Management System'
++  wb.created = new Date()
++
++  const salesEmployees = employees.filter(e => e.department === 'SALES')
++  const salesSupportEmployees = employees.filter(e => e.department === 'SALES_SUPPORT')
++
++  buildDepartmentSheet(wb, '영업부', salesEmployees, '발생 월차')
++  buildDepartmentSheet(wb, '영업지원부', salesSupportEmployees, '발생 연차')
++
++  return wb.xlsx.writeBuffer()
++}

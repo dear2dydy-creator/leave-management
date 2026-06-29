@@ -8,13 +8,16 @@ export async function PATCH(req: NextRequest) {
   const session = await getServerSession(authOptions)
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
+  const userEmail = session.user?.email
+  if (!userEmail) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
   const { currentPassword, newPassword } = await req.json()
 
   if (!currentPassword || !newPassword) {
     return NextResponse.json({ error: '현재 비밀번호와 새 비밀번호를 입력해주세요.' }, { status: 400 })
   }
 
-  const admin = await db.adminUser.findUnique({ where: { email: session.user?.email ?? '' } })
+  const admin = await db.adminUser.findUnique({ where: { email: userEmail } })
   if (!admin) return NextResponse.json({ error: '사용자를 찾을 수 없습니다.' }, { status: 404 })
 
   const valid = await bcrypt.compare(currentPassword, admin.passwordHash)

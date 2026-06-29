@@ -1,0 +1,405 @@
+﻿512b8f9 feat: admin account management settings (Task 11)
+
+ app/(dashboard)/settings/page.tsx | 279 ++++++++++++++++++++++++++++++++++++++
+ app/api/admin/users/[id]/route.ts |  27 ++++
+ app/api/admin/users/me/route.ts   |  30 ++++
+ app/api/admin/users/route.ts      |  37 +++++
+ 4 files changed, 373 insertions(+)
+
+diff --git a/app/(dashboard)/settings/page.tsx b/app/(dashboard)/settings/page.tsx
+new file mode 100644
+index 0000000..b10074f
+--- /dev/null
++++ b/app/(dashboard)/settings/page.tsx
+@@ -0,0 +1,279 @@
++'use client'
++import { useEffect, useState } from 'react'
++import { useSession } from 'next-auth/react'
++
++type AdminUser = { id: string; name: string; email: string; createdAt: string }
++
++export default function SettingsPage() {
++  const { data: session } = useSession()
++  const [users, setUsers] = useState<AdminUser[]>([])
++  const [loading, setLoading] = useState(true)
++
++  // Add admin form state
++  const [showAddForm, setShowAddForm] = useState(false)
++  const [addForm, setAddForm] = useState({ name: '', email: '', password: '' })
++  const [addSaving, setAddSaving] = useState(false)
++  const [addError, setAddError] = useState('')
++
++  // Change password form state
++  const [pwForm, setPwForm] = useState({ currentPassword: '', newPassword: '', confirmPassword: '' })
++  const [pwSaving, setPwSaving] = useState(false)
++  const [pwError, setPwError] = useState('')
++  const [pwSuccess, setPwSuccess] = useState(false)
++
++  function loadUsers() {
++    setLoading(true)
++    fetch('/api/admin/users')
++      .then(r => r.json())
++      .then(d => setUsers(d.users ?? []))
++      .finally(() => setLoading(false))
++  }
++
++  useEffect(() => { loadUsers() }, [])
++
++  async function handleAddAdmin(e: React.FormEvent) {
++    e.preventDefault()
++    setAddError('')
++    setAddSaving(true)
++    const res = await fetch('/api/admin/users', {
++      method: 'POST',
++      headers: { 'Content-Type': 'application/json' },
++      body: JSON.stringify(addForm),
++    })
++    setAddSaving(false)
++    if (res.ok) {
++      setShowAddForm(false)
++      setAddForm({ name: '', email: '', password: '' })
++      loadUsers()
++    } else {
++      const d = await res.json()
++      setAddError(d.error ?? '오류가 발생했습니다.')
++    }
++  }
++
++  async function handleDelete(id: string, name: string) {
++    if (!confirm(`'${name}' 관리자를 삭제하시겠습니까?`)) return
++    const res = await fetch(`/api/admin/users/${id}`, { method: 'DELETE' })
++    if (res.ok) {
++      loadUsers()
++    } else {
++      const d = await res.json()
++      alert(d.error ?? '삭제 중 오류가 발생했습니다.')
++    }
++  }
++
++  async function handleChangePassword(e: React.FormEvent) {
++    e.preventDefault()
++    setPwError('')
++    setPwSuccess(false)
++
++    if (pwForm.newPassword !== pwForm.confirmPassword) {
++      setPwError('새 비밀번호가 일치하지 않습니다.')
++      return
++    }
++    if (pwForm.newPassword.length < 6) {
++      setPwError('새 비밀번호는 6자 이상이어야 합니다.')
++      return
++    }
++
++    setPwSaving(true)
++    const res = await fetch('/api/admin/users/me', {
++      method: 'PATCH',
++      headers: { 'Content-Type': 'application/json' },
++      body: JSON.stringify({
++        currentPassword: pwForm.currentPassword,
++        newPassword: pwForm.newPassword,
++      }),
++    })
++    setPwSaving(false)
++
++    if (res.ok) {
++      setPwSuccess(true)
++      setPwForm({ currentPassword: '', newPassword: '', confirmPassword: '' })
++    } else {
++      const d = await res.json()
++      setPwError(d.error ?? '비밀번호 변경 중 오류가 발생했습니다.')
++    }
++  }
++
++  const currentUserEmail = session?.user?.email
++
++  return (
++    <div className="max-w-2xl space-y-8">
++      <h2 className="text-2xl font-bold">관리자 설정</h2>
++
++      {/* Admin List Section */}
++      <section className="bg-white rounded-lg shadow">
++        <div className="flex justify-between items-center px-6 py-4 border-b">
++          <h3 className="text-lg font-semibold">관리자 계정 목록</h3>
++          <button
++            onClick={() => { setShowAddForm(!showAddForm); setAddError('') }}
++            className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm font-medium"
++          >
++            {showAddForm ? '취소' : '+ 관리자 추가'}
++          </button>
++        </div>
++
++        {showAddForm && (
++          <form onSubmit={handleAddAdmin} className="px-6 py-4 border-b bg-blue-50 space-y-3">
++            <h4 className="font-medium text-blue-800">새 관리자 추가</h4>
++            {addError && (
++              <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">{addError}</p>
++            )}
++            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
++              <div>
++                <label className="block text-sm font-medium text-gray-700 mb-1">이름</label>
++                <input
++                  type="text"
++                  value={addForm.name}
++                  onChange={e => setAddForm(f => ({ ...f, name: e.target.value }))}
++                  className="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
++                  placeholder="홍길동"
++                  required
++                />
++              </div>
++              <div>
++                <label className="block text-sm font-medium text-gray-700 mb-1">이메일</label>
++                <input
++                  type="email"
++                  value={addForm.email}
++                  onChange={e => setAddForm(f => ({ ...f, email: e.target.value }))}
++                  className="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
++                  placeholder="admin@example.com"
++                  required
++                />
++              </div>
++              <div>
++                <label className="block text-sm font-medium text-gray-700 mb-1">비밀번호</label>
++                <input
++                  type="password"
++                  value={addForm.password}
++                  onChange={e => setAddForm(f => ({ ...f, password: e.target.value }))}
++                  className="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
++                  placeholder="6자 이상"
++                  required
++                  minLength={6}
++                />
++              </div>
++            </div>
++            <button
++              type="submit"
++              disabled={addSaving}
++              className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm font-medium disabled:opacity-50"
++            >
++              {addSaving ? '추가 중...' : '추가'}
++            </button>
++          </form>
++        )}
++
++        <table className="min-w-full text-sm">
++          <thead className="bg-gray-50">
++            <tr>
++              {['이름', '이메일', '등록일', ''].map(h => (
++                <th key={h} className="px-4 py-3 text-left font-medium text-gray-600 text-xs uppercase tracking-wider">{h}</th>
++              ))}
++            </tr>
++          </thead>
++          <tbody className="divide-y divide-gray-100">
++            {loading ? (
++              <tr>
++                <td colSpan={4} className="px-4 py-8 text-center text-gray-400">로딩 중...</td>
++              </tr>
++            ) : users.length === 0 ? (
++              <tr>
++                <td colSpan={4} className="px-4 py-8 text-center text-gray-400">관리자 계정이 없습니다.</td>
++              </tr>
++            ) : (
++              users.map(user => {
++                const isSelf = user.email === currentUserEmail
++                const isLast = users.length <= 1
++                const canDelete = !isSelf && !isLast
++                return (
++                  <tr key={user.id} className="hover:bg-gray-50">
++                    <td className="px-4 py-3 font-medium">
++                      {user.name}
++                      {isSelf && (
++                        <span className="ml-2 text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">나</span>
++                      )}
++                    </td>
++                    <td className="px-4 py-3 text-gray-600">{user.email}</td>
++                    <td className="px-4 py-3 text-gray-500">
++                      {new Date(user.createdAt).toLocaleDateString('ko-KR')}
++                    </td>
++                    <td className="px-4 py-3">
++                      <button
++                        onClick={() => handleDelete(user.id, user.name)}
++                        disabled={!canDelete}
++                        title={isSelf ? '자신의 계정은 삭제할 수 없습니다' : isLast ? '마지막 관리자는 삭제할 수 없습니다' : ''}
++                        className="text-red-600 hover:underline text-xs disabled:text-gray-300 disabled:no-underline disabled:cursor-not-allowed"
++                      >
++                        삭제
++                      </button>
++                    </td>
++                  </tr>
++                )
++              })
++            )}
++          </tbody>
++        </table>
++      </section>
++
++      {/* Change Password Section */}
++      <section className="bg-white rounded-lg shadow">
++        <div className="px-6 py-4 border-b">
++          <h3 className="text-lg font-semibold">비밀번호 변경</h3>
++          <p className="text-sm text-gray-500 mt-1">현재 로그인된 계정의 비밀번호를 변경합니다.</p>
++        </div>
++        <form onSubmit={handleChangePassword} className="px-6 py-4 space-y-4">
++          {pwError && (
++            <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">{pwError}</p>
++          )}
++          {pwSuccess && (
++            <p className="text-sm text-green-600 bg-green-50 border border-green-200 rounded px-3 py-2">
++              비밀번호가 성공적으로 변경되었습니다.
++            </p>
++          )}
++          <div>
++            <label className="block text-sm font-medium text-gray-700 mb-1">현재 비밀번호</label>
++            <input
++              type="password"
++              value={pwForm.currentPassword}
++              onChange={e => setPwForm(f => ({ ...f, currentPassword: e.target.value }))}
++              className="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 max-w-sm"
++              required
++            />
++          </div>
++          <div>
++            <label className="block text-sm font-medium text-gray-700 mb-1">새 비밀번호</label>
++            <input
++              type="password"
++              value={pwForm.newPassword}
++              onChange={e => setPwForm(f => ({ ...f, newPassword: e.target.value }))}
++              className="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 max-w-sm"
++              required
++              minLength={6}
++            />
++          </div>
++          <div>
++            <label className="block text-sm font-medium text-gray-700 mb-1">새 비밀번호 확인</label>
++            <input
++              type="password"
++              value={pwForm.confirmPassword}
++              onChange={e => setPwForm(f => ({ ...f, confirmPassword: e.target.value }))}
++              className="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 max-w-sm"
++              required
++              minLength={6}
++            />
++          </div>
++          <button
++            type="submit"
++            disabled={pwSaving}
++            className="px-4 py-2 bg-gray-800 text-white rounded hover:bg-gray-700 text-sm font-medium disabled:opacity-50"
++          >
++            {pwSaving ? '변경 중...' : '비밀번호 변경'}
++          </button>
++        </form>
++      </section>
++    </div>
++  )
++}
+diff --git a/app/api/admin/users/[id]/route.ts b/app/api/admin/users/[id]/route.ts
+new file mode 100644
+index 0000000..c1fb8f6
+--- /dev/null
++++ b/app/api/admin/users/[id]/route.ts
+@@ -0,0 +1,27 @@
++import { NextRequest, NextResponse } from 'next/server'
++import { getServerSession } from 'next-auth'
++import { authOptions } from '@/lib/auth'
++import { db } from '@/lib/db'
++
++export async function DELETE(
++  _req: NextRequest,
++  { params }: { params: { id: string } }
++) {
++  const session = await getServerSession(authOptions)
++  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
++
++  // Self-delete guard
++  const currentUser = await db.adminUser.findUnique({ where: { email: session.user?.email ?? '' } })
++  if (currentUser?.id === params.id) {
++    return NextResponse.json({ error: '자신의 계정은 삭제할 수 없습니다.' }, { status: 400 })
++  }
++
++  // Last admin guard
++  const count = await db.adminUser.count()
++  if (count <= 1) {
++    return NextResponse.json({ error: '마지막 관리자 계정은 삭제할 수 없습니다.' }, { status: 400 })
++  }
++
++  await db.adminUser.delete({ where: { id: params.id } })
++  return NextResponse.json({ success: true })
++}
+diff --git a/app/api/admin/users/me/route.ts b/app/api/admin/users/me/route.ts
+new file mode 100644
+index 0000000..b81960b
+--- /dev/null
++++ b/app/api/admin/users/me/route.ts
+@@ -0,0 +1,30 @@
++import { NextRequest, NextResponse } from 'next/server'
++import { getServerSession } from 'next-auth'
++import { authOptions } from '@/lib/auth'
++import { db } from '@/lib/db'
++import bcrypt from 'bcryptjs'
++
++export async function PATCH(req: NextRequest) {
++  const session = await getServerSession(authOptions)
++  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
++
++  const { currentPassword, newPassword } = await req.json()
++
++  if (!currentPassword || !newPassword) {
++    return NextResponse.json({ error: '현재 비밀번호와 새 비밀번호를 입력해주세요.' }, { status: 400 })
++  }
++
++  const admin = await db.adminUser.findUnique({ where: { email: session.user?.email ?? '' } })
++  if (!admin) return NextResponse.json({ error: '사용자를 찾을 수 없습니다.' }, { status: 404 })
++
++  const valid = await bcrypt.compare(currentPassword, admin.passwordHash)
++  if (!valid) return NextResponse.json({ error: '현재 비밀번호가 올바르지 않습니다.' }, { status: 400 })
++
++  const passwordHash = await bcrypt.hash(newPassword, 10)
++  await db.adminUser.update({
++    where: { id: admin.id },
++    data: { passwordHash },
++  })
++
++  return NextResponse.json({ success: true })
++}
+diff --git a/app/api/admin/users/route.ts b/app/api/admin/users/route.ts
+new file mode 100644
+index 0000000..d70b879
+--- /dev/null
++++ b/app/api/admin/users/route.ts
+@@ -0,0 +1,37 @@
++import { NextRequest, NextResponse } from 'next/server'
++import { getServerSession } from 'next-auth'
++import { authOptions } from '@/lib/auth'
++import { db } from '@/lib/db'
++import bcrypt from 'bcryptjs'
++
++export async function GET() {
++  const session = await getServerSession(authOptions)
++  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
++
++  const users = await db.adminUser.findMany({
++    select: { id: true, name: true, email: true, createdAt: true },
++    orderBy: { createdAt: 'asc' },
++  })
++  return NextResponse.json({ users })
++}
++
++export async function POST(req: NextRequest) {
++  const session = await getServerSession(authOptions)
++  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
++
++  const { name, email, password } = await req.json()
++
++  if (!name || !email || !password) {
++    return NextResponse.json({ error: '이름, 이메일, 비밀번호는 필수입니다.' }, { status: 400 })
++  }
++
++  const exists = await db.adminUser.findUnique({ where: { email } })
++  if (exists) return NextResponse.json({ error: '이미 사용 중인 이메일입니다.' }, { status: 400 })
++
++  const passwordHash = await bcrypt.hash(password, 10)
++  const user = await db.adminUser.create({
++    data: { name, email, passwordHash },
++    select: { id: true, name: true, email: true, createdAt: true },
++  })
++  return NextResponse.json({ user }, { status: 201 })
++}

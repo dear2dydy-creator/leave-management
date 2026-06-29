@@ -10,8 +10,11 @@ export async function DELETE(
   const session = await getServerSession(authOptions)
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
+  const userEmail = session.user?.email
+  if (!userEmail) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
   // Self-delete guard
-  const currentUser = await db.adminUser.findUnique({ where: { email: session.user?.email ?? '' } })
+  const currentUser = await db.adminUser.findUnique({ where: { email: userEmail } })
   if (currentUser?.id === params.id) {
     return NextResponse.json({ error: '자신의 계정은 삭제할 수 없습니다.' }, { status: 400 })
   }
