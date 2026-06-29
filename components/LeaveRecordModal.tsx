@@ -49,17 +49,27 @@ export default function LeaveRecordModal({
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setSaving(true)
-    const url = initial?.id
-      ? `/api/employees/${employeeId}/leave-records/${initial.id}`
-      : `/api/employees/${employeeId}/leave-records`
-    await fetch(url, {
-      method: initial?.id ? 'PUT' : 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(form),
-    })
-    setSaving(false)
-    onSaved()
-    onClose()
+    try {
+      const url = initial?.id
+        ? `/api/employees/${employeeId}/leave-records/${initial.id}`
+        : `/api/employees/${employeeId}/leave-records`
+      const res = await fetch(url, {
+        method: initial?.id ? 'PUT' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(form),
+      })
+      if (!res.ok) {
+        const msg = await res.json().catch(() => ({ error: '오류가 발생했습니다' }))
+        alert(msg.error ?? '저장 실패')
+        return
+      }
+      onSaved()
+      onClose()
+    } catch {
+      alert('저장 중 오류가 발생했습니다')
+    } finally {
+      setSaving(false)
+    }
   }
 
   return (

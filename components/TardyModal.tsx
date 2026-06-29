@@ -23,15 +23,25 @@ export default function TardyModal({
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setSaving(true)
-    const res = await fetch(`/api/employees/${employeeId}/tardy`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ date, note: dates || null }),
-    })
-    const data = await res.json()
-    setSaving(false)
-    setResult({ deducted: data.deducted, newCount: data.employee.tardyCount })
-    onSaved()
+    try {
+      const res = await fetch(`/api/employees/${employeeId}/tardy`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ date, note: dates || null }),
+      })
+      if (!res.ok) {
+        const msg = await res.json().catch(() => ({ error: '오류가 발생했습니다' }))
+        alert(msg.error ?? '저장 실패')
+        return
+      }
+      const data = await res.json()
+      setResult({ deducted: data.deducted, newCount: data.employee.tardyCount })
+      onSaved()
+    } catch {
+      alert('저장 중 오류가 발생했습니다')
+    } finally {
+      setSaving(false)
+    }
   }
 
   return (
