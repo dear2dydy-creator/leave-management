@@ -41,9 +41,19 @@ export default function LeaveRecordModal({
     ...initial,
   })
   const [saving, setSaving] = useState(false)
+  const [sameAsStart, setSameAsStart] = useState(false)
 
   function update(k: keyof FormData, v: string) {
-    setForm(f => ({ ...f, [k]: v }))
+    setForm(f => {
+      const next = { ...f, [k]: v }
+      if (k === 'startDate' && sameAsStart) next.endDate = v
+      return next
+    })
+  }
+
+  function toggleSameAsStart(checked: boolean) {
+    setSameAsStart(checked)
+    if (checked) setForm(f => ({ ...f, endDate: f.startDate }))
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -96,7 +106,17 @@ export default function LeaveRecordModal({
                 onChange={e => update('endDate', e.target.value)}
                 className="w-full border rounded px-3 py-2 mt-1"
                 required
+                disabled={sameAsStart}
               />
+              <label className="flex items-center gap-1.5 mt-1.5 text-xs text-gray-600 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={sameAsStart}
+                  onChange={e => toggleSameAsStart(e.target.checked)}
+                  className="cursor-pointer"
+                />
+                시작일과 같음
+              </label>
             </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
