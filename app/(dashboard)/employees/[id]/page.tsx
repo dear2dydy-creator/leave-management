@@ -5,6 +5,7 @@ import LeaveBalanceCard from '@/components/LeaveBalanceCard'
 import LeaveRecordTable from '@/components/LeaveRecordTable'
 import LeaveRecordModal from '@/components/LeaveRecordModal'
 import TardyModal from '@/components/TardyModal'
+import TardyRecordTable from '@/components/TardyRecordTable'
 
 const COMPANY_LABEL: Record<string, string> = { SKYCAMP: '스카이캠프', SKYAN: '스카이앤' }
 const DEPT_LABEL: Record<string, string> = { SALES: '영업부', SALES_SUPPORT: '영업지원부' }
@@ -27,11 +28,17 @@ export default function EmployeeDetailPage() {
 
   if (!data) return <p className="p-8">불러오는 중...</p>
 
-  const { employee, balance, leaveRecords } = data
+  const { employee, balance, leaveRecords, tardyRecords } = data
 
   async function handleDelete(recordId: string) {
     if (!confirm('삭제하시겠습니까?')) return
     await fetch(`/api/employees/${id}/leave-records/${recordId}`, { method: 'DELETE' })
+    load()
+  }
+
+  async function handleTardyDelete(recordId: string) {
+    if (!confirm('지각 기록을 삭제하면 지각 횟수가 1 감소합니다. 삭제하시겠습니까?')) return
+    await fetch(`/api/employees/${id}/tardy/${recordId}`, { method: 'DELETE' })
     load()
   }
 
@@ -91,6 +98,11 @@ export default function EmployeeDetailPage() {
           onSaved={load}
         />
       )}
+
+      <TardyRecordTable
+        records={tardyRecords ?? []}
+        onDelete={handleTardyDelete}
+      />
 
       {showTardy && (
         <TardyModal

@@ -14,5 +14,5 @@
 - [x] Task 8: 지각 기록 (commit: 0045e35, fix: 5c5866b error handling)
 - [x] Task 9: 달력 뷰 (commit: 0c81d72, review clean)
 - [x] Task 10: 엑셀 내보내기 (commit: 8f79a26, review clean)
-- [ ] Task 11: 관리자 설정
-- [ ] Task 12: Vercel 배포
+- [x] Task 11: 관리자 설정 (commits: 512b8f9..61a759c, fix: session.user.email null guard)
+- [x] Task 12: Vercel 배포 (URL: https://leave-management-tau-eight.vercel.app, Neon DB 마이그레이션+시드 완료)

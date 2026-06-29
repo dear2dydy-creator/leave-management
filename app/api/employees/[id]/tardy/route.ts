@@ -15,14 +15,15 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
   const { deductCount, newTardyCount } = calculateTardyDeduction(employee.tardyCount)
 
-  await db.employee.update({
-    where: { id: params.id },
-    data: { tardyCount: newTardyCount },
-  })
+  const tardyDate = new Date(date)
+
+  const [updatedEmployee, tardyRecord] = await db.$transaction([
+    db.employee.update({ where: { id: params.id }, data: { tardyCount: newTardyCount } }),
+    db.tardyRecord.create({ data: { employeeId: params.id, date: tardyDate, note: note || null } }),
+  ])
 
   let autoRecord = null
   if (deductCount > 0) {
-    const tardyDate = new Date(date)
     autoRecord = await db.leaveRecord.create({
       data: {
         employeeId: params.id,
@@ -38,8 +39,9 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   }
 
   return NextResponse.json({
-    employee: { ...employee, tardyCount: newTardyCount },
+    employee: { ...updatedEmployee, tardyCount: newTardyCount },
     deducted: deductCount > 0,
     autoRecord,
+    tardyRecord,
   })
 }

@@ -14,6 +14,7 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
     include: {
       leaveBalances: true,
       leaveRecords: { orderBy: { startDate: 'desc' } },
+      tardyRecords: { orderBy: { date: 'desc' } },
     },
   })
   if (!employee) return NextResponse.json({ error: 'Not found' }, { status: 404 })
@@ -60,6 +61,7 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
       remainingDays: allocatedDays + (balance?.bonusDays ?? 0) - (balance?.deductionDays ?? 0) - usedDays,
     },
     leaveRecords: employee.leaveRecords,
+    tardyRecords: employee.tardyRecords,
   })
 }
 

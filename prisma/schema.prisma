@@ -28,17 +28,18 @@ enum LeaveCategory {
 }
 
 model Employee {
-  id              String        @id @default(cuid())
+  id              String         @id @default(cuid())
   name            String
   company         Company
   department      Department
   position        String
   hireDate        DateTime
   terminationDate DateTime?
-  tardyCount      Int           @default(0)
-  createdAt       DateTime      @default(now())
+  tardyCount      Int            @default(0)
+  createdAt       DateTime       @default(now())
   leaveBalances   LeaveBalance[]
   leaveRecords    LeaveRecord[]
+  tardyRecords    TardyRecord[]
 
   @@map("employees")
 }
@@ -72,6 +73,17 @@ model LeaveRecord {
   employee        Employee      @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 
   @@map("leave_records")
+}
+
+model TardyRecord {
+  id         String   @id @default(cuid())
+  employeeId String
+  date       DateTime
+  note       String?
+  createdAt  DateTime @default(now())
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@map("tardy_records")
 }
 
 model AdminUser {
