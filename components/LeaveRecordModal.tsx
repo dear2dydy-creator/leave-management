@@ -1,5 +1,6 @@
 'use client'
 import { useState } from 'react'
+import DateInput from '@/components/DateInput'
 
 const CATEGORIES = [
   { v: 'ANNUAL', l: '연차' },
@@ -90,24 +91,15 @@ export default function LeaveRecordModal({
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="text-sm font-medium">시작일</label>
-              <input
-                type="date"
-                value={form.startDate}
-                onChange={e => update('startDate', e.target.value)}
-                className="w-full border rounded px-3 py-2 mt-1"
-                required
-              />
+              <div className="mt-1">
+                <DateInput value={form.startDate} onChange={v => update('startDate', v)} required />
+              </div>
             </div>
             <div>
               <label className="text-sm font-medium">종료일</label>
-              <input
-                type="date"
-                value={form.endDate}
-                onChange={e => update('endDate', e.target.value)}
-                className="w-full border rounded px-3 py-2 mt-1"
-                required
-                disabled={sameAsStart}
-              />
+              <div className="mt-1">
+                <DateInput value={form.endDate} onChange={v => update('endDate', v)} required disabled={sameAsStart} />
+              </div>
               <label className="flex items-center gap-1.5 mt-1.5 text-xs text-gray-600 cursor-pointer">
                 <input
                   type="checkbox"

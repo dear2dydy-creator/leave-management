@@ -1,5 +1,6 @@
 'use client'
 import { useState } from 'react'
+import DateInput from '@/components/DateInput'
 
 export default function TardyModal({
   employeeId,
@@ -94,25 +95,21 @@ export default function TardyModal({
                 <p className="text-xs text-gray-500">차감되는 지각 3회 날짜를 입력하세요.</p>
                 <div>
                   <label className="text-sm font-medium">1번째 지각일</label>
-                  <input type="date" value={prevDate1} onChange={e => setPrevDate1(e.target.value)}
-                    className="w-full border rounded px-3 py-2 mt-1" required />
+                  <div className="mt-1"><DateInput value={prevDate1} onChange={setPrevDate1} required /></div>
                 </div>
                 <div>
                   <label className="text-sm font-medium">2번째 지각일</label>
-                  <input type="date" value={prevDate2} onChange={e => setPrevDate2(e.target.value)}
-                    className="w-full border rounded px-3 py-2 mt-1" required />
+                  <div className="mt-1"><DateInput value={prevDate2} onChange={setPrevDate2} required /></div>
                 </div>
                 <div>
                   <label className="text-sm font-medium">3번째 지각일</label>
-                  <input type="date" value={date} onChange={e => setDate(e.target.value)}
-                    className="w-full border rounded px-3 py-2 mt-1" required />
+                  <div className="mt-1"><DateInput value={date} onChange={setDate} required /></div>
                 </div>
               </div>
             ) : (
               <div>
                 <label className="text-sm font-medium">지각 날짜</label>
-                <input type="date" value={date} onChange={e => setDate(e.target.value)}
-                  className="w-full border rounded px-3 py-2 mt-1" required />
+                <div className="mt-1"><DateInput value={date} onChange={setDate} required /></div>
               </div>
             )}
             <div className="flex gap-2 pt-2">
