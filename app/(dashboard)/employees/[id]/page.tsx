@@ -49,6 +49,11 @@ export default function EmployeeDetailPage() {
         <div className="flex gap-2">
           <button onClick={() => router.push(`/employees/${id}/edit`)}
             className="px-4 py-2 border rounded hover:bg-gray-50 text-sm">수정</button>
+          <button onClick={async () => {
+            if (!confirm(`${employee.name} 직원을 삭제하시겠습니까?\n모든 휴가 기록도 함께 삭제됩니다.`)) return
+            await fetch(`/api/employees/${id}`, { method: 'DELETE' })
+            router.push('/')
+          }} className="px-4 py-2 border border-red-300 text-red-600 rounded hover:bg-red-50 text-sm">삭제</button>
           <button onClick={() => router.back()}
             className="px-4 py-2 border rounded hover:bg-gray-50 text-sm">뒤로</button>
         </div>
