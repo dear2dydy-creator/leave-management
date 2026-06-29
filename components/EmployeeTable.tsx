@@ -18,7 +18,7 @@ export default function EmployeeTable({ employees }: { employees: EmployeeRow[] 
       <table className="min-w-full bg-white rounded-lg shadow text-sm">
         <thead className="bg-gray-100">
           <tr>
-            {['이름', '회사', '부서', '직책', '적용기간', '발생', '추가', '제외', '사용', '잔여'].map(h => (
+            {['이름', '회사', '부서', '직책', '입사일', '적용기간', '발생', '추가', '제외', '사용', '잔여'].map(h => (
               <th key={h} className="px-3 py-2 text-left font-medium text-gray-700">{h}</th>
             ))}
           </tr>
@@ -35,6 +35,9 @@ export default function EmployeeTable({ employees }: { employees: EmployeeRow[] 
               <td className="px-3 py-2">{COMPANY_LABEL[emp.company]}</td>
               <td className="px-3 py-2">{DEPT_LABEL[emp.department]}</td>
               <td className="px-3 py-2">{emp.position}</td>
+              <td className="px-3 py-2 text-xs text-gray-600">
+                {new Date(emp.hireDate).toLocaleDateString('ko-KR')}
+              </td>
               <td className="px-3 py-2 text-xs text-gray-600">
                 {new Date(emp.periodStart).toLocaleDateString('ko-KR')} ~{' '}
                 {new Date(emp.periodEnd).toLocaleDateString('ko-KR')}
