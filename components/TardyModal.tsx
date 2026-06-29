@@ -4,23 +4,32 @@ import { useState } from 'react'
 export default function TardyModal({
   employeeId,
   tardyCount,
+  tardyRecords = [],
   onClose,
   onSaved,
 }: {
   employeeId: string
   tardyCount: number
+  tardyRecords?: { id: string; date: string }[]
   onClose: () => void
   onSaved: () => void
 }) {
   const today = new Date().toISOString().slice(0, 10)
-  const [date, setDate] = useState(today)
-  const [prevDate1, setPrevDate1] = useState('')
-  const [prevDate2, setPrevDate2] = useState('')
-  const [saving, setSaving] = useState(false)
-  const [result, setResult] = useState<{ deducted: boolean; newCount: number } | null>(null)
-
   const nextCount = tardyCount + 1
   const willDeduct = nextCount % 3 === 0
+
+  // tardyRecords is ordered desc (newest first)
+  // When deducting, last 2 records are the other 2 in this cycle
+  const toDate = (d: string) => new Date(d).toISOString().slice(0, 10)
+  const [date, setDate] = useState(today)
+  const [prevDate1, setPrevDate1] = useState(
+    willDeduct && tardyRecords[1] ? toDate(tardyRecords[1].date) : ''
+  )
+  const [prevDate2, setPrevDate2] = useState(
+    willDeduct && tardyRecords[0] ? toDate(tardyRecords[0].date) : ''
+  )
+  const [saving, setSaving] = useState(false)
+  const [result, setResult] = useState<{ deducted: boolean; newCount: number } | null>(null)
 
   function formatDate(d: string) {
     return d.replace(/-/g, '.')

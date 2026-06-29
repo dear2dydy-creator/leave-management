@@ -113,6 +113,7 @@ export default function EmployeeDetailPage() {
         <TardyModal
           employeeId={id}
           tardyCount={employee.tardyCount}
+          tardyRecords={tardyRecords ?? []}
           onClose={() => setShowTardy(false)}
           onSaved={load}
         />
