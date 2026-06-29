@@ -14,10 +14,10 @@ export async function DELETE(
   if (!record || record.employeeId !== params.id)
     return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
-  await db.$transaction([
-    db.tardyRecord.delete({ where: { id: params.recordId } }),
-    db.employee.update({ where: { id: params.id }, data: { tardyCount: { decrement: 1 } } }),
-  ])
+  await db.tardyRecord.delete({ where: { id: params.recordId } })
+  // sync tardyCount from actual records
+  const remaining = await db.tardyRecord.count({ where: { employeeId: params.id } })
+  await db.employee.update({ where: { id: params.id }, data: { tardyCount: remaining } })
 
   return NextResponse.json({ success: true })
 }

@@ -13,7 +13,9 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   const employee = await db.employee.findUnique({ where: { id: params.id } })
   if (!employee) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
-  const { deductCount, newTardyCount } = calculateTardyDeduction(employee.tardyCount)
+  // currentCount = actual number of tardy records (source of truth)
+  const currentCount = await db.tardyRecord.count({ where: { employeeId: params.id } })
+  const { deductCount, newTardyCount } = calculateTardyDeduction(currentCount)
 
   const tardyDate = new Date(date)
 

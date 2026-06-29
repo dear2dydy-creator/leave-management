@@ -45,7 +45,7 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
       position: employee.position,
       hireDate: employee.hireDate,
       terminationDate: employee.terminationDate,
-      tardyCount: employee.tardyCount,
+      tardyCount: employee.tardyRecords.length,
       createdAt: employee.createdAt,
     },
     balance: {
