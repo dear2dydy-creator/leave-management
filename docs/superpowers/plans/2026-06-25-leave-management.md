@@ -1,0 +1,2363 @@
+# 직원 연월차 관리 시스템 구현 계획
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** 스카이캠프/스카이앤 직원(영업부·영업지원부)의 연차·월차·지각을 관리하는 관리자 전용 Next.js 14 웹 앱 구축 및 Vercel 배포
+
+**Architecture:** Next.js 14 App Router 풀스택. API Routes로 REST 제공, Client Components로 상호작용 UI 구성. Prisma ORM으로 Neon Postgres 접근. 연차 계산·지각 처리는 순수 함수로 분리해 Vitest TDD.
+
+**Tech Stack:** Next.js 14, TypeScript 5, Prisma 5, Neon Postgres, NextAuth.js v4, ExcelJS, Tailwind CSS, Vitest
+
+## Global Constraints
+
+- Node.js 18+ 필요
+- TypeScript strict mode
+- 부서 값: `SALES`(영업부) / `SALES_SUPPORT`(영업지원부)
+- 영업지원부 직원: 한민재, 민정후, 최우영, 김인우, 이다영
+- 연차 잔액 차감 카테고리: `ANNUAL`, `MONTHLY`, `HALF`만 차감; `SICK`, `PUBLIC`, `ABSENCE`, `OTHER`는 차감 없음
+- 지각: 누적 3의 배수마다 반차(0.5일) 자동 차감, 연도 리셋 없음
+- 월차 발생: 입사일 기준 매 1개월 단위 (1일 기준 아님). 예) 1월 14일 입사 → 2월 14일에 1일 발생
+- 만근 기준: 해당 월 기간 내 결근(`ABSENCE`) 기록 없음 (병가/공가 무관)
+- `LeaveBalance.allocatedDaysOverride` null = 자동 계산, not null = 관리자 수동 override
+- `usedDays` = LeaveRecord 합계로 실시간 계산 (DB 저장 안 함)
+- 프로젝트 루트: `E:\클로드코드\연월차관리`
+
+---
+
+## File Map
+
+```
+E:\클로드코드\연월차관리\
+├── prisma/
+│   ├── schema.prisma
+│   └── seed.ts
+├── app/
+│   ├── layout.tsx
+│   ├── globals.css
+│   ├── (auth)/login/page.tsx
+│   ├── (dashboard)/
+│   │   ├── layout.tsx
+│   │   ├── page.tsx                          ← 대시보드
+│   │   ├── employees/new/page.tsx
+│   │   ├── employees/[id]/page.tsx           ← 직원 상세
+│   │   ├── calendar/page.tsx
+│   │   └── settings/page.tsx
+│   └── api/
+│       ├── auth/[...nextauth]/route.ts
+│       ├── employees/route.ts
+│       ├── employees/[id]/route.ts
+│       ├── employees/[id]/leave-records/route.ts
+│       ├── employees/[id]/leave-records/[recordId]/route.ts
+│       ├── employees/[id]/tardy/route.ts
+│       ├── calendar/route.ts
+│       ├── export/route.ts
+│       ├── admin/route.ts
+│       └── admin/[id]/route.ts
+├── components/
+│   ├── EmployeeTable.tsx
+│   ├── EmployeeForm.tsx
+│   ├── LeaveBalanceCard.tsx
+│   ├── LeaveRecordTable.tsx
+│   ├── LeaveRecordModal.tsx
+│   ├── TardyModal.tsx
+│   └── CalendarView.tsx
+├── lib/
+│   ├── auth.ts
+│   ├── db.ts
+│   ├── leave-calculator.ts
+│   ├── tardy.ts
+│   └── excel-export.ts
+├── __tests__/
+│   ├── leave-calculator.test.ts
+│   └── tardy.test.ts
+├── middleware.ts
+├── vitest.config.ts
+├── .env.local
+└── .env.example
+```
+
+---
+
+### Task 1: 프로젝트 초기 설정 & 데이터베이스 스키마
+
+**Files:**
+- Create: (전체 Next.js 프로젝트 초기화)
+- Create: `prisma/schema.prisma`
+- Create: `lib/db.ts`
+- Create: `prisma/seed.ts`
+- Create: `.env.example`
+
+**Interfaces:**
+- Produces: `db` (PrismaClient singleton) — `import { db } from '@/lib/db'`
+
+- [ ] **Step 1: 기존 임시 파일 정리 후 Next.js 프로젝트 초기화**
+
+```powershell
+cd "E:\클로드코드\연월차관리"
+# 기존 npm 임시 파일 제거 (xlsx 설치용으로 생성됐던 것)
+Remove-Item -Recurse -Force node_modules, package.json, package-lock.json -ErrorAction SilentlyContinue
+# Next.js 14 초기화 (현재 디렉토리에)
+npx create-next-app@14 . --typescript --tailwind --app --no-src-dir --import-alias "@/*" --no-git
+```
+
+프롬프트 응답: ESLint → Yes, 나머지는 기본값
+
+- [ ] **Step 2: 추가 의존성 설치**
+
+```bash
+npm install @prisma/client next-auth bcryptjs exceljs
+npm install -D prisma @types/bcryptjs vitest @vitejs/plugin-react
+```
+
+- [ ] **Step 3: Prisma 초기화**
+
+```bash
+npx prisma init
+```
+
+- [ ] **Step 4: `prisma/schema.prisma` 작성**
+
+```prisma
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Company {
+  SKYCAMP
+  SKYAN
+}
+
+enum Department {
+  SALES
+  SALES_SUPPORT
+}
+
+enum LeaveCategory {
+  ANNUAL
+  MONTHLY
+  HALF
+  SICK
+  PUBLIC
+  ABSENCE
+  OTHER
+}
+
+model Employee {
+  id              String        @id @default(cuid())
+  name            String
+  company         Company
+  department      Department
+  position        String
+  hireDate        DateTime
+  terminationDate DateTime?
+  tardyCount      Int           @default(0)
+  createdAt       DateTime      @default(now())
+  leaveBalances   LeaveBalance[]
+  leaveRecords    LeaveRecord[]
+
+  @@map("employees")
+}
+
+model LeaveBalance {
+  id                    String    @id @default(cuid())
+  employeeId            String
+  periodStart           DateTime
+  periodEnd             DateTime
+  allocatedDaysOverride Float?
+  bonusDays             Float     @default(0)
+  deductionDays         Float     @default(0)
+  note                  String?
+  employee              Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@unique([employeeId, periodStart])
+  @@map("leave_balances")
+}
+
+model LeaveRecord {
+  id              String        @id @default(cuid())
+  employeeId      String
+  startDate       DateTime
+  endDate         DateTime
+  category        LeaveCategory
+  days            Float
+  reason          String?
+  note            String?
+  isAutoGenerated Boolean       @default(false)
+  createdAt       DateTime      @default(now())
+  employee        Employee      @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@map("leave_records")
+}
+
+model AdminUser {
+  id           String   @id @default(cuid())
+  name         String
+  email        String   @unique
+  passwordHash String
+  createdAt    DateTime @default(now())
+
+  @@map("admin_users")
+}
+```
+
+- [ ] **Step 5: `.env.local` 및 `.env.example` 작성**
+
+`.env.example`:
+```
+DATABASE_URL="postgresql://user:password@host/dbname?sslmode=require"
+NEXTAUTH_SECRET="generate-with-openssl-rand-base64-32"
+NEXTAUTH_URL="http://localhost:3000"
+```
+
+`.env.local`: Neon 콘솔(console.neon.tech)에서 프로젝트 생성 후 Connection String을 `DATABASE_URL`에 입력. `NEXTAUTH_SECRET`은 `openssl rand -base64 32` 출력값 사용.
+
+- [ ] **Step 6: `lib/db.ts` 작성**
+
+```typescript
+import { PrismaClient } from '@prisma/client'
+
+const globalForPrisma = globalThis as unknown as { prisma: PrismaClient }
+
+export const db = globalForPrisma.prisma ?? new PrismaClient()
+
+if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = db
+```
+
+- [ ] **Step 7: `prisma/seed.ts` 작성**
+
+```typescript
+import { PrismaClient } from '@prisma/client'
+import bcrypt from 'bcryptjs'
+
+const db = new PrismaClient()
+
+async function main() {
+  const hash = await bcrypt.hash('admin1234', 10)
+  await db.adminUser.upsert({
+    where: { email: 'admin@skycamp.com' },
+    update: {},
+    create: { name: '관리자', email: 'admin@skycamp.com', passwordHash: hash },
+  })
+  console.log('Seed complete: admin@skycamp.com / admin1234')
+}
+
+main().catch(console.error).finally(() => db.$disconnect())
+```
+
+`package.json`에 seed 스크립트 추가:
+```json
+"prisma": {
+  "seed": "ts-node --compiler-options {\"module\":\"CommonJS\"} prisma/seed.ts"
+}
+```
+그리고 `npm install -D ts-node` 실행.
+
+- [ ] **Step 8: `vitest.config.ts` 작성**
+
+```typescript
+import { defineConfig } from 'vitest/config'
+import react from '@vitejs/plugin-react'
+import { resolve } from 'path'
+
+export default defineConfig({
+  plugins: [react()],
+  test: {
+    environment: 'node',
+  },
+  resolve: {
+    alias: { '@': resolve(__dirname, '.') },
+  },
+})
+```
+
+`package.json` scripts에 추가:
+```json
+"test": "vitest run",
+"test:watch": "vitest"
+```
+
+- [ ] **Step 9: DB 마이그레이션 및 시드 실행**
+
+```bash
+npx prisma migrate dev --name init
+npx prisma db seed
+```
+
+Expected: 테이블 4개 생성, 시드 완료 메시지 출력
+
+- [ ] **Step 10: 커밋**
+
+```bash
+git init
+git add -A
+git commit -m "feat: project bootstrap with Next.js 14, Prisma schema, seed"
+```
+
+---
+
+### Task 2: 인증 (NextAuth.js)
+
+**Files:**
+- Create: `lib/auth.ts`
+- Create: `app/api/auth/[...nextauth]/route.ts`
+- Create: `middleware.ts`
+- Create: `app/(auth)/login/page.tsx`
+- Create: `app/layout.tsx` (SessionProvider 래핑)
+
+**Interfaces:**
+- Produces: `authOptions` — `import { authOptions } from '@/lib/auth'`
+- Produces: `/login` 페이지, 인증 미들웨어
+
+- [ ] **Step 1: `lib/auth.ts` 작성**
+
+```typescript
+import { NextAuthOptions } from 'next-auth'
+import CredentialsProvider from 'next-auth/providers/credentials'
+import bcrypt from 'bcryptjs'
+import { db } from '@/lib/db'
+
+export const authOptions: NextAuthOptions = {
+  providers: [
+    CredentialsProvider({
+      name: 'credentials',
+      credentials: {
+        email: { label: 'Email', type: 'email' },
+        password: { label: 'Password', type: 'password' },
+      },
+      async authorize(credentials) {
+        if (!credentials?.email || !credentials?.password) return null
+        const admin = await db.adminUser.findUnique({
+          where: { email: credentials.email },
+        })
+        if (!admin) return null
+        const valid = await bcrypt.compare(credentials.password, admin.passwordHash)
+        if (!valid) return null
+        return { id: admin.id, email: admin.email, name: admin.name }
+      },
+    }),
+  ],
+  session: { strategy: 'jwt' },
+  pages: { signIn: '/login' },
+  secret: process.env.NEXTAUTH_SECRET,
+}
+```
+
+- [ ] **Step 2: `app/api/auth/[...nextauth]/route.ts` 작성**
+
+```typescript
+import NextAuth from 'next-auth'
+import { authOptions } from '@/lib/auth'
+
+const handler = NextAuth(authOptions)
+export { handler as GET, handler as POST }
+```
+
+- [ ] **Step 3: `middleware.ts` 작성**
+
+```typescript
+export { default } from 'next-auth/middleware'
+
+export const config = {
+  matcher: ['/((?!login|api/auth|_next/static|_next/image|favicon.ico).*)'],
+}
+```
+
+- [ ] **Step 4: `app/layout.tsx` 수정 — SessionProvider 래핑**
+
+```typescript
+'use client'
+import { SessionProvider } from 'next-auth/react'
+import './globals.css'
+
+export default function RootLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <html lang="ko">
+      <body>
+        <SessionProvider>{children}</SessionProvider>
+      </body>
+    </html>
+  )
+}
+```
+
+- [ ] **Step 5: `app/(auth)/login/page.tsx` 작성**
+
+```typescript
+'use client'
+import { signIn } from 'next-auth/react'
+import { useRouter } from 'next/navigation'
+import { useState } from 'react'
+
+export default function LoginPage() {
+  const router = useRouter()
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [error, setError] = useState('')
+  const [loading, setLoading] = useState(false)
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    setLoading(true)
+    const result = await signIn('credentials', { email, password, redirect: false })
+    setLoading(false)
+    if (result?.error) setError('이메일 또는 비밀번호가 올바르지 않습니다.')
+    else router.push('/')
+  }
+
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-gray-50">
+      <div className="max-w-md w-full bg-white p-8 rounded-lg shadow">
+        <h1 className="text-2xl font-bold text-center mb-6">연월차 관리 시스템</h1>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium mb-1">이메일</label>
+            <input type="email" value={email} onChange={e => setEmail(e.target.value)}
+              className="w-full border rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" required />
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-1">비밀번호</label>
+            <input type="password" value={password} onChange={e => setPassword(e.target.value)}
+              className="w-full border rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" required />
+          </div>
+          {error && <p className="text-red-500 text-sm">{error}</p>}
+          <button type="submit" disabled={loading}
+            className="w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700 font-medium disabled:opacity-50">
+            {loading ? '로그인 중...' : '로그인'}
+          </button>
+        </form>
+      </div>
+    </div>
+  )
+}
+```
+
+- [ ] **Step 6: 브라우저에서 로그인 테스트**
+
+```bash
+npm run dev
+```
+
+`http://localhost:3000` 접속 → `/login`으로 리다이렉트 확인.
+`admin@skycamp.com` / `admin1234` 로그인 → `/` 리다이렉트 확인.
+잘못된 비밀번호 → 오류 메시지 확인.
+
+- [ ] **Step 7: 커밋**
+
+```bash
+git add -A
+git commit -m "feat: NextAuth credentials login with protected routes"
+```
+
+---
+
+### Task 3: 연차 계산 로직 (TDD)
+
+**Files:**
+- Create: `__tests__/leave-calculator.test.ts`
+- Create: `lib/leave-calculator.ts`
+
+**Interfaces:**
+- Produces:
+  - `calculateAnnualLeave(hireDate: Date, ref?: Date): number`
+  - `calculateMonthlyLeave(periodStart: Date, absenceDates: Date[], ref?: Date): number`
+  - `getCurrentPeriod(hireDate: Date, ref?: Date): { start: Date; end: Date }`
+
+- [ ] **Step 1: 실패하는 테스트 작성**
+
+`__tests__/leave-calculator.test.ts`:
+```typescript
+import { describe, it, expect } from 'vitest'
+import { calculateAnnualLeave, calculateMonthlyLeave, getCurrentPeriod } from '../lib/leave-calculator'
+
+describe('calculateAnnualLeave (영업지원부)', () => {
+  const hire = new Date('2024-01-14')
+
+  it('1개월 미만 → 0일', () => {
+    expect(calculateAnnualLeave(hire, new Date('2024-01-20'))).toBe(0)
+  })
+  it('1개월 → 1일', () => {
+    expect(calculateAnnualLeave(hire, new Date('2024-02-14'))).toBe(1)
+  })
+  it('11개월 → 11일', () => {
+    expect(calculateAnnualLeave(hire, new Date('2024-12-14'))).toBe(11)
+  })
+  it('12개월 → 15일', () => {
+    expect(calculateAnnualLeave(hire, new Date('2025-01-14'))).toBe(15)
+  })
+  it('3년 → 16일', () => {
+    expect(calculateAnnualLeave(hire, new Date('2027-01-14'))).toBe(16)
+  })
+  it('5년 → 17일', () => {
+    expect(calculateAnnualLeave(hire, new Date('2029-01-14'))).toBe(17)
+  })
+  it('21년 → 25일 (최대)', () => {
+    expect(calculateAnnualLeave(hire, new Date('2045-01-14'))).toBe(25)
+  })
+})
+
+describe('calculateMonthlyLeave (영업부)', () => {
+  const periodStart = new Date('2025-01-14')
+
+  it('만근 1개월 → 1일', () => {
+    expect(calculateMonthlyLeave(periodStart, [], new Date('2025-02-14'))).toBe(1)
+  })
+  it('아직 끝나지 않은 달 → 0일', () => {
+    expect(calculateMonthlyLeave(periodStart, [], new Date('2025-01-20'))).toBe(0)
+  })
+  it('결근 있는 달 → 발생 안 함', () => {
+    expect(calculateMonthlyLeave(periodStart, [new Date('2025-01-20')], new Date('2025-02-14'))).toBe(0)
+  })
+  it('3개월 만근 → 3일', () => {
+    expect(calculateMonthlyLeave(periodStart, [], new Date('2025-04-14'))).toBe(3)
+  })
+  it('2달 중 1달 결근 → 1일', () => {
+    expect(calculateMonthlyLeave(periodStart, [new Date('2025-02-01')], new Date('2025-03-14'))).toBe(1)
+  })
+})
+
+describe('getCurrentPeriod', () => {
+  it('입사 후 6개월 → 1년차 기간', () => {
+    const hire = new Date('2025-01-14')
+    const { start, end } = getCurrentPeriod(hire, new Date('2025-07-01'))
+    expect(start.toISOString().slice(0, 10)).toBe('2025-01-14')
+    expect(end.toISOString().slice(0, 10)).toBe('2026-01-14')
+  })
+  it('입사 후 14개월 → 2년차 기간', () => {
+    const hire = new Date('2024-01-14')
+    const { start, end } = getCurrentPeriod(hire, new Date('2025-03-01'))
+    expect(start.toISOString().slice(0, 10)).toBe('2025-01-14')
+    expect(end.toISOString().slice(0, 10)).toBe('2026-01-14')
+  })
+})
+```
+
+- [ ] **Step 2: 테스트 실패 확인**
+
+```bash
+npm test
+```
+
+Expected: "Cannot find module '../lib/leave-calculator'"
+
+- [ ] **Step 3: `lib/leave-calculator.ts` 구현**
+
+```typescript
+export function calculateAnnualLeave(hireDate: Date, referenceDate: Date = new Date()): number {
+  const months = monthsDiff(hireDate, referenceDate)
+  if (months < 12) return Math.min(months, 11)
+  const years = Math.floor(months / 12)
+  const bonus = Math.floor((years - 1) / 2)
+  return Math.min(15 + bonus, 25)
+}
+
+export function calculateMonthlyLeave(
+  periodStart: Date,
+  absenceDates: Date[],
+  referenceDate: Date = new Date()
+): number {
+  let count = 0
+  let monthStart = new Date(periodStart)
+  while (true) {
+    const monthEnd = addMonths(monthStart, 1)
+    if (monthEnd > referenceDate) break
+    const hasAbsence = absenceDates.some(d => d >= monthStart && d < monthEnd)
+    if (!hasAbsence) count++
+    monthStart = monthEnd
+  }
+  return count
+}
+
+export function getCurrentPeriod(hireDate: Date, referenceDate: Date = new Date()): {
+  start: Date
+  end: Date
+} {
+  const months = monthsDiff(hireDate, referenceDate)
+  const years = Math.floor(months / 12)
+  const start = addMonths(hireDate, years * 12)
+  const end = addMonths(start, 12)
+  return { start, end }
+}
+
+function monthsDiff(start: Date, end: Date): number {
+  return (end.getFullYear() - start.getFullYear()) * 12 +
+    (end.getMonth() - start.getMonth())
+}
+
+function addMonths(date: Date, months: number): Date {
+  const d = new Date(date)
+  const day = d.getDate()
+  d.setMonth(d.getMonth() + months)
+  if (d.getDate() !== day) d.setDate(0) // 월말 overflow 처리
+  return d
+}
+```
+
+- [ ] **Step 4: 테스트 통과 확인**
+
+```bash
+npm test
+```
+
+Expected: All 12 tests PASS
+
+- [ ] **Step 5: 커밋**
+
+```bash
+git add -A
+git commit -m "feat: leave calculator with TDD (annual + monthly + period)"
+```
+
+---
+
+### Task 4: 지각 처리 로직 (TDD)
+
+**Files:**
+- Create: `__tests__/tardy.test.ts`
+- Create: `lib/tardy.ts`
+
+**Interfaces:**
+- Produces: `calculateTardyDeduction(currentCount: number, increment?: number): { deductCount: number; newTardyCount: number }`
+
+- [ ] **Step 1: 실패하는 테스트 작성**
+
+`__tests__/tardy.test.ts`:
+```typescript
+import { describe, it, expect } from 'vitest'
+import { calculateTardyDeduction } from '../lib/tardy'
+
+describe('calculateTardyDeduction', () => {
+  it('0 → 1: 차감 없음', () => {
+    expect(calculateTardyDeduction(0)).toEqual({ deductCount: 0, newTardyCount: 1 })
+  })
+  it('1 → 2: 차감 없음', () => {
+    expect(calculateTardyDeduction(1)).toEqual({ deductCount: 0, newTardyCount: 2 })
+  })
+  it('2 → 3: 반차 1회 차감', () => {
+    expect(calculateTardyDeduction(2)).toEqual({ deductCount: 1, newTardyCount: 3 })
+  })
+  it('3 → 4: 차감 없음', () => {
+    expect(calculateTardyDeduction(3)).toEqual({ deductCount: 0, newTardyCount: 4 })
+  })
+  it('5 → 6: 반차 1회 차감', () => {
+    expect(calculateTardyDeduction(5)).toEqual({ deductCount: 1, newTardyCount: 6 })
+  })
+  it('0 → 3 (increment=3): 반차 1회 차감', () => {
+    expect(calculateTardyDeduction(0, 3)).toEqual({ deductCount: 1, newTardyCount: 3 })
+  })
+  it('0 → 6 (increment=6): 반차 2회 차감', () => {
+    expect(calculateTardyDeduction(0, 6)).toEqual({ deductCount: 2, newTardyCount: 6 })
+  })
+})
+```
+
+- [ ] **Step 2: 테스트 실패 확인**
+
+```bash
+npm test
+```
+
+- [ ] **Step 3: `lib/tardy.ts` 구현**
+
+```typescript
+export function calculateTardyDeduction(
+  currentCount: number,
+  increment: number = 1
+): { deductCount: number; newTardyCount: number } {
+  const newCount = currentCount + increment
+  const deductCount = Math.floor(newCount / 3) - Math.floor(currentCount / 3)
+  return { deductCount, newTardyCount: newCount }
+}
+```
+
+- [ ] **Step 4: 테스트 통과 확인**
+
+```bash
+npm test
+```
+
+Expected: All tests PASS
+
+- [ ] **Step 5: 커밋**
+
+```bash
+git add -A
+git commit -m "feat: tardy deduction logic with TDD"
+```
+
+---
+
+### Task 5: Employee CRUD API
+
+**Files:**
+- Create: `app/api/employees/route.ts`
+- Create: `app/api/employees/[id]/route.ts`
+
+**Interfaces:**
+- Produces:
+  - `GET /api/employees` → `{ employees: Employee[] }`
+  - `POST /api/employees` → `{ employee: Employee }`
+  - `GET /api/employees/[id]` → `{ employee, balance, leaveRecords }`
+  - `PUT /api/employees/[id]` → `{ employee }`
+  - `DELETE /api/employees/[id]` → `{ success: true }`
+
+- [ ] **Step 1: `app/api/employees/route.ts` 작성**
+
+```typescript
+import { NextRequest, NextResponse } from 'next/server'
+import { getServerSession } from 'next-auth'
+import { authOptions } from '@/lib/auth'
+import { db } from '@/lib/db'
+import { calculateAnnualLeave, calculateMonthlyLeave, getCurrentPeriod } from '@/lib/leave-calculator'
+import { Department } from '@prisma/client'
+
+export async function GET() {
+  const session = await getServerSession(authOptions)
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  const employees = await db.employee.findMany({
+    orderBy: [{ terminationDate: 'asc' }, { name: 'asc' }],
+    include: {
+      leaveBalances: true,
+      leaveRecords: { where: { category: { in: ['ANNUAL', 'MONTHLY', 'HALF'] } } },
+    },
+  })
+
+  const today = new Date()
+  const result = employees.map(emp => {
+    const { start, end } = getCurrentPeriod(emp.hireDate, today)
+    const balance = emp.leaveBalances.find(b => b.periodStart.getTime() === start.getTime())
+    const absenceDates = emp.leaveRecords
+      .filter(r => r.category === 'ABSENCE')
+      .map(r => r.startDate)
+
+    const allocatedDays = balance?.allocatedDaysOverride ??
+      (emp.department === Department.SALES_SUPPORT
+        ? calculateAnnualLeave(emp.hireDate, today)
+        : calculateMonthlyLeave(start, absenceDates, today))
+
+    const usedDays = emp.leaveRecords
+      .filter(r => r.startDate >= start && r.startDate < end)
+      .reduce((sum, r) => sum + r.days, 0)
+
+    return {
+      id: emp.id, name: emp.name, company: emp.company, department: emp.department,
+      position: emp.position, hireDate: emp.hireDate, terminationDate: emp.terminationDate,
+      tardyCount: emp.tardyCount, createdAt: emp.createdAt,
+      periodStart: start, periodEnd: end,
+      allocatedDays, bonusDays: balance?.bonusDays ?? 0,
+      deductionDays: balance?.deductionDays ?? 0, usedDays,
+      remainingDays: allocatedDays + (balance?.bonusDays ?? 0) - (balance?.deductionDays ?? 0) - usedDays,
+    }
+  })
+
+  return NextResponse.json({ employees: result })
+}
+
+export async function POST(req: NextRequest) {
+  const session = await getServerSession(authOptions)
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  const body = await req.json()
+  const { name, company, department, position, hireDate, terminationDate } = body
+
+  const employee = await db.employee.create({
+    data: {
+      name, company, department, position,
+      hireDate: new Date(hireDate),
+      terminationDate: terminationDate ? new Date(terminationDate) : null,
+    },
+  })
+
+  return NextResponse.json({ employee }, { status: 201 })
+}
+```
+
+- [ ] **Step 2: `app/api/employees/[id]/route.ts` 작성**
+
+```typescript
+import { NextRequest, NextResponse } from 'next/server'
+import { getServerSession } from 'next-auth'
+import { authOptions } from '@/lib/auth'
+import { db } from '@/lib/db'
+import { calculateAnnualLeave, calculateMonthlyLeave, getCurrentPeriod } from '@/lib/leave-calculator'
+import { Department } from '@prisma/client'
+
+export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
+  const session = await getServerSession(authOptions)
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  const employee = await db.employee.findUnique({
+    where: { id: params.id },
+    include: {
+      leaveBalances: true,
+      leaveRecords: { orderBy: { startDate: 'desc' } },
+    },
+  })
+  if (!employee) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+
+  const today = new Date()
+  const { start, end } = getCurrentPeriod(employee.hireDate, today)
+  const balance = employee.leaveBalances.find(b => b.periodStart.getTime() === start.getTime()) ?? null
+
+  const absenceDates = employee.leaveRecords
+    .filter(r => r.category === 'ABSENCE')
+    .map(r => r.startDate)
+
+  const allocatedDays = balance?.allocatedDaysOverride ??
+    (employee.department === Department.SALES_SUPPORT
+      ? calculateAnnualLeave(employee.hireDate, today)
+      : calculateMonthlyLeave(start, absenceDates, today))
+
+  const usedDays = employee.leaveRecords
+    .filter(r => ['ANNUAL', 'MONTHLY', 'HALF'].includes(r.category) && r.startDate >= start && r.startDate < end)
+    .reduce((sum, r) => sum + r.days, 0)
+
+  return NextResponse.json({
+    employee: {
+      id: employee.id, name: employee.name, company: employee.company,
+      department: employee.department, position: employee.position,
+      hireDate: employee.hireDate, terminationDate: employee.terminationDate,
+      tardyCount: employee.tardyCount, createdAt: employee.createdAt,
+    },
+    balance: {
+      id: balance?.id ?? null, periodStart: start, periodEnd: end,
+      allocatedDays, allocatedDaysOverride: balance?.allocatedDaysOverride ?? null,
+      bonusDays: balance?.bonusDays ?? 0, deductionDays: balance?.deductionDays ?? 0,
+      usedDays, note: balance?.note ?? null,
+      remainingDays: allocatedDays + (balance?.bonusDays ?? 0) - (balance?.deductionDays ?? 0) - usedDays,
+    },
+    leaveRecords: employee.leaveRecords,
+  })
+}
+
+export async function PUT(req: NextRequest, { params }: { params: { id: string } }) {
+  const session = await getServerSession(authOptions)
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  const body = await req.json()
+  const { name, company, department, position, hireDate, terminationDate,
+          allocatedDaysOverride, bonusDays, deductionDays, balanceNote } = body
+
+  const employee = await db.employee.update({
+    where: { id: params.id },
+    data: {
+      name, company, department, position,
+      hireDate: new Date(hireDate),
+      terminationDate: terminationDate ? new Date(terminationDate) : null,
+    },
+  })
+
+  if (allocatedDaysOverride !== undefined || bonusDays !== undefined || deductionDays !== undefined) {
+    const today = new Date()
+    const { start, end } = getCurrentPeriod(employee.hireDate, today)
+    await db.leaveBalance.upsert({
+      where: { employeeId_periodStart: { employeeId: employee.id, periodStart: start } },
+      update: { allocatedDaysOverride, bonusDays, deductionDays, note: balanceNote },
+      create: { employeeId: employee.id, periodStart: start, periodEnd: end,
+                allocatedDaysOverride, bonusDays: bonusDays ?? 0,
+                deductionDays: deductionDays ?? 0, note: balanceNote },
+    })
+  }
+
+  return NextResponse.json({ employee })
+}
+
+export async function DELETE(_req: NextRequest, { params }: { params: { id: string } }) {
+  const session = await getServerSession(authOptions)
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  await db.employee.delete({ where: { id: params.id } })
+  return NextResponse.json({ success: true })
+}
+```
+
+- [ ] **Step 3: curl로 API 테스트**
+
+```bash
+# 직원 목록 (인증 필요 — 브라우저에서 로그인 후 테스트)
+curl http://localhost:3000/api/employees
+# Expected: { employees: [] } 또는 401
+```
+
+- [ ] **Step 4: 커밋**
+
+```bash
+git add -A
+git commit -m "feat: employee CRUD API with auto leave calculation"
+```
+
+---
+
+### Task 6: 대시보드 & 직원 페이지 UI
+
+**Files:**
+- Create: `app/(dashboard)/layout.tsx`
+- Create: `app/(dashboard)/page.tsx`
+- Create: `app/(dashboard)/employees/new/page.tsx`
+- Create: `app/(dashboard)/employees/[id]/page.tsx`
+- Create: `components/EmployeeTable.tsx`
+- Create: `components/EmployeeForm.tsx`
+- Create: `components/LeaveBalanceCard.tsx`
+
+**Interfaces:**
+- Consumes: `GET /api/employees`, `GET /api/employees/[id]`, `POST /api/employees`, `PUT /api/employees/[id]`
+
+- [ ] **Step 1: `app/(dashboard)/layout.tsx` 작성**
+
+```typescript
+'use client'
+import Link from 'next/link'
+import { usePathname } from 'next/navigation'
+import { signOut } from 'next-auth/react'
+
+export default function DashboardLayout({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname()
+  const links = [
+    { href: '/', label: '대시보드' },
+    { href: '/calendar', label: '달력' },
+    { href: '/settings', label: '관리자 설정' },
+  ]
+  return (
+    <div className="min-h-screen flex">
+      <aside className="w-48 bg-gray-900 text-white flex flex-col p-4">
+        <h1 className="text-lg font-bold mb-6">연월차 관리</h1>
+        <nav className="flex-1 space-y-1">
+          {links.map(l => (
+            <Link key={l.href} href={l.href}
+              className={`block px-3 py-2 rounded text-sm ${pathname === l.href ? 'bg-blue-600' : 'hover:bg-gray-700'}`}>
+              {l.label}
+            </Link>
+          ))}
+        </nav>
+        <button onClick={() => signOut({ callbackUrl: '/login' })}
+          className="text-sm text-gray-400 hover:text-white mt-4">로그아웃</button>
+      </aside>
+      <main className="flex-1 p-8 bg-gray-50">{children}</main>
+    </div>
+  )
+}
+```
+
+- [ ] **Step 2: `components/EmployeeTable.tsx` 작성**
+
+```typescript
+'use client'
+import Link from 'next/link'
+
+type EmployeeRow = {
+  id: string; name: string; company: string; department: string; position: string
+  hireDate: string; terminationDate: string | null
+  periodStart: string; periodEnd: string
+  allocatedDays: number; bonusDays: number; deductionDays: number
+  usedDays: number; remainingDays: number
+}
+
+const COMPANY_LABEL: Record<string, string> = { SKYCAMP: '스카이캠프', SKYAN: '스카이앤' }
+const DEPT_LABEL: Record<string, string> = { SALES: '영업부', SALES_SUPPORT: '영업지원부' }
+
+export default function EmployeeTable({ employees }: { employees: EmployeeRow[] }) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="min-w-full bg-white rounded-lg shadow text-sm">
+        <thead className="bg-gray-100">
+          <tr>
+            {['이름','회사','부서','직급','적용기간','발생','추가','공제','사용','잔여'].map(h => (
+              <th key={h} className="px-3 py-2 text-left font-medium text-gray-600">{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {employees.map(emp => (
+            <tr key={emp.id}
+              className={`border-t hover:bg-gray-50 ${emp.terminationDate ? 'opacity-50' : ''}`}>
+              <td className="px-3 py-2">
+                <Link href={`/employees/${emp.id}`} className="text-blue-600 hover:underline font-medium">
+                  {emp.name}{emp.terminationDate ? ' (퇴사)' : ''}
+                </Link>
+              </td>
+              <td className="px-3 py-2">{COMPANY_LABEL[emp.company]}</td>
+              <td className="px-3 py-2">{DEPT_LABEL[emp.department]}</td>
+              <td className="px-3 py-2">{emp.position}</td>
+              <td className="px-3 py-2 text-xs text-gray-500">
+                {new Date(emp.periodStart).toLocaleDateString('ko-KR')} ~{' '}
+                {new Date(emp.periodEnd).toLocaleDateString('ko-KR')}
+              </td>
+              <td className="px-3 py-2 text-center">{emp.allocatedDays}</td>
+              <td className="px-3 py-2 text-center">{emp.bonusDays}</td>
+              <td className="px-3 py-2 text-center">{emp.deductionDays}</td>
+              <td className="px-3 py-2 text-center">{emp.usedDays}</td>
+              <td className={`px-3 py-2 text-center font-semibold ${emp.remainingDays < 0 ? 'text-red-600' : ''}`}>
+                {emp.remainingDays}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+```
+
+- [ ] **Step 3: `app/(dashboard)/page.tsx` 작성**
+
+```typescript
+'use client'
+import { useEffect, useState } from 'react'
+import Link from 'next/link'
+import EmployeeTable from '@/components/EmployeeTable'
+
+export default function DashboardPage() {
+  const [employees, setEmployees] = useState([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    fetch('/api/employees').then(r => r.json()).then(d => {
+      setEmployees(d.employees)
+      setLoading(false)
+    })
+  }, [])
+
+  async function handleExport() {
+    const res = await fetch('/api/export')
+    const blob = await res.blob()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `연월차관리_${new Date().toISOString().slice(0, 10)}.xlsx`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  return (
+    <div>
+      <div className="flex justify-between items-center mb-6">
+        <h2 className="text-2xl font-bold">직원 연월차 현황</h2>
+        <div className="flex gap-2">
+          <button onClick={handleExport}
+            className="px-4 py-2 border rounded hover:bg-gray-100 text-sm">엑셀 내보내기</button>
+          <Link href="/employees/new"
+            className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm">
+            + 직원 추가
+          </Link>
+        </div>
+      </div>
+      {loading ? <p>불러오는 중...</p> : <EmployeeTable employees={employees} />}
+    </div>
+  )
+}
+```
+
+- [ ] **Step 4: `components/EmployeeForm.tsx` 작성**
+
+```typescript
+'use client'
+import { useState } from 'react'
+import { useRouter } from 'next/navigation'
+
+type FormData = {
+  name: string; company: string; department: string; position: string
+  hireDate: string; terminationDate: string
+}
+
+export default function EmployeeForm({ initial, id }: { initial?: Partial<FormData>; id?: string }) {
+  const router = useRouter()
+  const [form, setForm] = useState<FormData>({
+    name: '', company: 'SKYCAMP', department: 'SALES', position: '사원',
+    hireDate: '', terminationDate: '', ...initial,
+  })
+  const [saving, setSaving] = useState(false)
+
+  function update(field: keyof FormData, value: string) {
+    setForm(f => ({ ...f, [field]: value }))
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    setSaving(true)
+    const body = { ...form, terminationDate: form.terminationDate || null }
+    if (id) {
+      await fetch(`/api/employees/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+    } else {
+      await fetch('/api/employees', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+    }
+    setSaving(false)
+    router.push('/')
+    router.refresh()
+  }
+
+  const field = (label: string, key: keyof FormData, type = 'text', opts?: { options?: {v:string,l:string}[] }) => (
+    <div key={key}>
+      <label className="block text-sm font-medium mb-1">{label}</label>
+      {opts?.options ? (
+        <select value={form[key]} onChange={e => update(key, e.target.value)}
+          className="w-full border rounded px-3 py-2">
+          {opts.options.map(o => <option key={o.v} value={o.v}>{o.l}</option>)}
+        </select>
+      ) : (
+        <input type={type} value={form[key]} onChange={e => update(key, e.target.value)}
+          className="w-full border rounded px-3 py-2" required={key === 'name' || key === 'hireDate'} />
+      )}
+    </div>
+  )
+
+  return (
+    <form onSubmit={handleSubmit} className="max-w-lg bg-white p-6 rounded-lg shadow space-y-4">
+      {field('이름', 'name')}
+      {field('회사', 'company', 'text', { options: [{v:'SKYCAMP',l:'스카이캠프'},{v:'SKYAN',l:'스카이앤'}] })}
+      {field('부서', 'department', 'text', { options: [{v:'SALES',l:'영업부'},{v:'SALES_SUPPORT',l:'영업지원부'}] })}
+      {field('직급', 'position')}
+      {field('입사일', 'hireDate', 'date')}
+      {field('퇴사일 (선택)', 'terminationDate', 'date')}
+      <div className="flex gap-2">
+        <button type="submit" disabled={saving}
+          className="flex-1 bg-blue-600 text-white py-2 rounded hover:bg-blue-700 disabled:opacity-50">
+          {saving ? '저장 중...' : (id ? '수정' : '추가')}
+        </button>
+        <button type="button" onClick={() => router.back()}
+          className="flex-1 border py-2 rounded hover:bg-gray-50">취소</button>
+      </div>
+    </form>
+  )
+}
+```
+
+- [ ] **Step 5: `app/(dashboard)/employees/new/page.tsx` 작성**
+
+```typescript
+import EmployeeForm from '@/components/EmployeeForm'
+
+export default function NewEmployeePage() {
+  return (
+    <div>
+      <h2 className="text-2xl font-bold mb-6">직원 추가</h2>
+      <EmployeeForm />
+    </div>
+  )
+}
+```
+
+- [ ] **Step 6: `components/LeaveBalanceCard.tsx` 작성**
+
+```typescript
+'use client'
+import { useState } from 'react'
+
+type Balance = {
+  id: string | null; periodStart: string; periodEnd: string
+  allocatedDays: number; allocatedDaysOverride: number | null
+  bonusDays: number; deductionDays: number; usedDays: number; remainingDays: number; note: string | null
+}
+
+export default function LeaveBalanceCard({ balance, employeeId, onUpdated }: {
+  balance: Balance; employeeId: string; onUpdated: () => void
+}) {
+  const [editing, setEditing] = useState(false)
+  const [override, setOverride] = useState(balance.allocatedDaysOverride?.toString() ?? '')
+  const [bonus, setBonus] = useState(balance.bonusDays.toString())
+  const [deduction, setDeduction] = useState(balance.deductionDays.toString())
+  const [note, setNote] = useState(balance.note ?? '')
+
+  async function save() {
+    await fetch(`/api/employees/${employeeId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        allocatedDaysOverride: override !== '' ? parseFloat(override) : null,
+        bonusDays: parseFloat(bonus) || 0,
+        deductionDays: parseFloat(deduction) || 0,
+        balanceNote: note || null,
+      }),
+    })
+    setEditing(false)
+    onUpdated()
+  }
+
+  return (
+    <div className="bg-white rounded-lg shadow p-6">
+      <div className="flex justify-between items-center mb-4">
+        <h3 className="font-semibold text-lg">연/월차 현황</h3>
+        <button onClick={() => setEditing(!editing)}
+          className="text-sm text-blue-600 hover:underline">{editing ? '취소' : '수정'}</button>
+      </div>
+      <p className="text-sm text-gray-500 mb-4">
+        {new Date(balance.periodStart).toLocaleDateString('ko-KR')} ~{' '}
+        {new Date(balance.periodEnd).toLocaleDateString('ko-KR')}
+      </p>
+      {editing ? (
+        <div className="space-y-3">
+          <div>
+            <label className="text-sm font-medium">발생일수 (비워두면 자동계산)</label>
+            <input type="number" step="0.5" value={override} onChange={e => setOverride(e.target.value)}
+              placeholder={`자동: ${balance.allocatedDays}`}
+              className="w-full border rounded px-3 py-2 mt-1" />
+          </div>
+          <div>
+            <label className="text-sm font-medium">추가일수</label>
+            <input type="number" step="0.5" value={bonus} onChange={e => setBonus(e.target.value)}
+              className="w-full border rounded px-3 py-2 mt-1" />
+          </div>
+          <div>
+            <label className="text-sm font-medium">공제일수</label>
+            <input type="number" step="0.5" value={deduction} onChange={e => setDeduction(e.target.value)}
+              className="w-full border rounded px-3 py-2 mt-1" />
+          </div>
+          <div>
+            <label className="text-sm font-medium">비고</label>
+            <input value={note} onChange={e => setNote(e.target.value)}
+              className="w-full border rounded px-3 py-2 mt-1" />
+          </div>
+          <button onClick={save} className="w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700">저장</button>
+        </div>
+      ) : (
+        <div className="grid grid-cols-3 gap-4 text-center">
+          {[
+            ['발생', balance.allocatedDays],
+            ['추가', balance.bonusDays],
+            ['공제', balance.deductionDays],
+            ['사용', balance.usedDays],
+            ['잔여', balance.remainingDays],
+          ].map(([label, val]) => (
+            <div key={label as string} className={`p-3 rounded ${label === '잔여' && (val as number) < 0 ? 'bg-red-50' : 'bg-gray-50'}`}>
+              <div className="text-xs text-gray-500">{label}</div>
+              <div className={`text-xl font-bold ${label === '잔여' && (val as number) < 0 ? 'text-red-600' : ''}`}>{val}</div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+```
+
+- [ ] **Step 7: `app/(dashboard)/employees/[id]/page.tsx` 작성**
+
+```typescript
+'use client'
+import { useCallback, useEffect, useState } from 'react'
+import { useParams, useRouter } from 'next/navigation'
+import LeaveBalanceCard from '@/components/LeaveBalanceCard'
+
+const COMPANY_LABEL: Record<string, string> = { SKYCAMP: '스카이캠프', SKYAN: '스카이앤' }
+const DEPT_LABEL: Record<string, string> = { SALES: '영업부', SALES_SUPPORT: '영업지원부' }
+
+export default function EmployeeDetailPage() {
+  const { id } = useParams<{ id: string }>()
+  const router = useRouter()
+  const [data, setData] = useState<any>(null)
+
+  const load = useCallback(() => {
+    fetch(`/api/employees/${id}`).then(r => r.json()).then(setData)
+  }, [id])
+
+  useEffect(() => { load() }, [load])
+
+  if (!data) return <p className="p-8">불러오는 중...</p>
+
+  const { employee, balance, leaveRecords } = data
+
+  return (
+    <div className="max-w-4xl space-y-6">
+      <div className="flex justify-between items-center">
+        <h2 className="text-2xl font-bold">{employee.name}</h2>
+        <div className="flex gap-2">
+          <button onClick={() => router.push(`/employees/${id}/edit`)}
+            className="px-4 py-2 border rounded hover:bg-gray-50 text-sm">수정</button>
+          <button onClick={() => router.back()}
+            className="px-4 py-2 border rounded hover:bg-gray-50 text-sm">뒤로</button>
+        </div>
+      </div>
+
+      <div className="bg-white rounded-lg shadow p-6 grid grid-cols-2 gap-4 text-sm">
+        <div><span className="text-gray-500">회사</span> {COMPANY_LABEL[employee.company]}</div>
+        <div><span className="text-gray-500">부서</span> {DEPT_LABEL[employee.department]}</div>
+        <div><span className="text-gray-500">직급</span> {employee.position}</div>
+        <div><span className="text-gray-500">누적 지각</span> {employee.tardyCount}회</div>
+        <div><span className="text-gray-500">입사일</span> {new Date(employee.hireDate).toLocaleDateString('ko-KR')}</div>
+        <div><span className="text-gray-500">퇴사일</span> {employee.terminationDate ? new Date(employee.terminationDate).toLocaleDateString('ko-KR') : '-'}</div>
+      </div>
+
+      <LeaveBalanceCard balance={balance} employeeId={id} onUpdated={load} />
+
+      <div className="bg-white rounded-lg shadow p-6">
+        <h3 className="font-semibold text-lg mb-4">휴가 사용내역</h3>
+        <p className="text-sm text-gray-400">← Task 7에서 구현</p>
+      </div>
+    </div>
+  )
+}
+```
+
+- [ ] **Step 8: 브라우저에서 동작 확인**
+
+```bash
+npm run dev
+```
+
+- 대시보드(`/`) → 직원 없으면 빈 테이블 확인
+- `/employees/new` → 직원 추가 폼 작성 → 제출 → 대시보드 리다이렉트 확인
+- 직원 이름 클릭 → 상세 페이지 → 연/월차 현황 카드 확인
+
+- [ ] **Step 9: 커밋**
+
+```bash
+git add -A
+git commit -m "feat: dashboard, employee list/detail/create UI"
+```
+
+---
+
+### Task 7: 휴가 기록 CRUD
+
+**Files:**
+- Create: `app/api/employees/[id]/leave-records/route.ts`
+- Create: `app/api/employees/[id]/leave-records/[recordId]/route.ts`
+- Create: `components/LeaveRecordTable.tsx`
+- Create: `components/LeaveRecordModal.tsx`
+- Modify: `app/(dashboard)/employees/[id]/page.tsx`
+
+**Interfaces:**
+- Consumes: `calculateTardyDeduction` from `@/lib/tardy`
+- Produces:
+  - `POST /api/employees/[id]/leave-records` → `{ record }`
+  - `PUT /api/employees/[id]/leave-records/[recordId]` → `{ record }`
+  - `DELETE /api/employees/[id]/leave-records/[recordId]` → `{ success: true }`
+
+- [ ] **Step 1: `app/api/employees/[id]/leave-records/route.ts` 작성**
+
+```typescript
+import { NextRequest, NextResponse } from 'next/server'
+import { getServerSession } from 'next-auth'
+import { authOptions } from '@/lib/auth'
+import { db } from '@/lib/db'
+
+export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+  const session = await getServerSession(authOptions)
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  const body = await req.json()
+  const { startDate, endDate, category, days, reason, note } = body
+
+  const record = await db.leaveRecord.create({
+    data: {
+      employeeId: params.id,
+      startDate: new Date(startDate),
+      endDate: new Date(endDate),
+      category,
+      days: parseFloat(days),
+      reason: reason || null,
+      note: note || null,
+    },
+  })
+  return NextResponse.json({ record }, { status: 201 })
+}
+```
+
+- [ ] **Step 2: `app/api/employees/[id]/leave-records/[recordId]/route.ts` 작성**
+
+```typescript
+import { NextRequest, NextResponse } from 'next/server'
+import { getServerSession } from 'next-auth'
+import { authOptions } from '@/lib/auth'
+import { db } from '@/lib/db'
+
+export async function PUT(req: NextRequest, { params }: { params: { id: string; recordId: string } }) {
+  const session = await getServerSession(authOptions)
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  const body = await req.json()
+  const { startDate, endDate, category, days, reason, note } = body
+
+  const record = await db.leaveRecord.update({
+    where: { id: params.recordId },
+    data: {
+      startDate: new Date(startDate), endDate: new Date(endDate),
+      category, days: parseFloat(days),
+      reason: reason || null, note: note || null,
+    },
+  })
+  return NextResponse.json({ record })
+}
+
+export async function DELETE(_req: NextRequest, { params }: { params: { id: string; recordId: string } }) {
+  const session = await getServerSession(authOptions)
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  await db.leaveRecord.delete({ where: { id: params.recordId } })
+  return NextResponse.json({ success: true })
+}
+```
+
+- [ ] **Step 3: `components/LeaveRecordTable.tsx` 작성**
+
+```typescript
+'use client'
+
+type Record = {
+  id: string; startDate: string; endDate: string; category: string
+  days: number; reason: string | null; note: string | null; isAutoGenerated: boolean
+}
+
+const CAT_LABEL: Record<string, string> = {
+  ANNUAL:'연차', MONTHLY:'월차', HALF:'반차', SICK:'병가',
+  PUBLIC:'공가', ABSENCE:'결근', OTHER:'기타',
+}
+const CAT_COLOR: Record<string, string> = {
+  ANNUAL:'bg-blue-100 text-blue-700', MONTHLY:'bg-green-100 text-green-700',
+  HALF:'bg-yellow-100 text-yellow-700', SICK:'bg-purple-100 text-purple-700',
+  PUBLIC:'bg-indigo-100 text-indigo-700', ABSENCE:'bg-red-100 text-red-700',
+  OTHER:'bg-gray-100 text-gray-700',
+}
+
+export default function LeaveRecordTable({ records, onEdit, onDelete }: {
+  records: Record[]
+  onEdit: (r: Record) => void
+  onDelete: (id: string) => void
+}) {
+  return (
+    <table className="min-w-full text-sm">
+      <thead className="bg-gray-100">
+        <tr>
+          {['시작일','종료일','구분','일수','사유','비고',''].map(h => (
+            <th key={h} className="px-3 py-2 text-left font-medium text-gray-600">{h}</th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {records.map(r => (
+          <tr key={r.id} className="border-t hover:bg-gray-50">
+            <td className="px-3 py-2">{new Date(r.startDate).toLocaleDateString('ko-KR')}</td>
+            <td className="px-3 py-2">{new Date(r.endDate).toLocaleDateString('ko-KR')}</td>
+            <td className="px-3 py-2">
+              <span className={`px-2 py-0.5 rounded text-xs font-medium ${CAT_COLOR[r.category]}`}>
+                {CAT_LABEL[r.category]}
+              </span>
+            </td>
+            <td className="px-3 py-2 text-center">{r.days}</td>
+            <td className="px-3 py-2 text-gray-600">{r.reason ?? '-'}</td>
+            <td className="px-3 py-2 text-gray-600">{r.note ?? '-'}</td>
+            <td className="px-3 py-2">
+              {!r.isAutoGenerated && (
+                <div className="flex gap-2">
+                  <button onClick={() => onEdit(r)} className="text-blue-600 hover:underline text-xs">수정</button>
+                  <button onClick={() => onDelete(r.id)} className="text-red-600 hover:underline text-xs">삭제</button>
+                </div>
+              )}
+              {r.isAutoGenerated && <span className="text-xs text-gray-400">자동</span>}
+            </td>
+          </tr>
+        ))}
+        {records.length === 0 && (
+          <tr><td colSpan={7} className="px-3 py-6 text-center text-gray-400">기록 없음</td></tr>
+        )}
+      </tbody>
+    </table>
+  )
+}
+```
+
+- [ ] **Step 4: `components/LeaveRecordModal.tsx` 작성**
+
+```typescript
+'use client'
+import { useState } from 'react'
+
+const CATEGORIES = [
+  { v: 'ANNUAL', l: '연차' }, { v: 'MONTHLY', l: '월차' }, { v: 'HALF', l: '반차' },
+  { v: 'SICK', l: '병가' }, { v: 'PUBLIC', l: '공가' }, { v: 'ABSENCE', l: '결근' },
+  { v: 'OTHER', l: '기타' },
+]
+
+type FormData = { startDate: string; endDate: string; category: string; days: string; reason: string; note: string }
+
+export default function LeaveRecordModal({ employeeId, initial, onClose, onSaved }: {
+  employeeId: string
+  initial?: { id: string } & Partial<FormData>
+  onClose: () => void
+  onSaved: () => void
+}) {
+  const [form, setForm] = useState<FormData>({
+    startDate: '', endDate: '', category: 'ANNUAL', days: '1', reason: '', note: '',
+    ...initial,
+  })
+  const [saving, setSaving] = useState(false)
+
+  function update(k: keyof FormData, v: string) { setForm(f => ({ ...f, [k]: v })) }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    setSaving(true)
+    const url = initial?.id
+      ? `/api/employees/${employeeId}/leave-records/${initial.id}`
+      : `/api/employees/${employeeId}/leave-records`
+    await fetch(url, {
+      method: initial?.id ? 'PUT' : 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(form),
+    })
+    setSaving(false)
+    onSaved()
+    onClose()
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+      <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-md">
+        <h3 className="font-semibold text-lg mb-4">{initial?.id ? '휴가 수정' : '휴가 추가'}</h3>
+        <form onSubmit={handleSubmit} className="space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-sm font-medium">시작일</label>
+              <input type="date" value={form.startDate} onChange={e => update('startDate', e.target.value)}
+                className="w-full border rounded px-3 py-2 mt-1" required />
+            </div>
+            <div>
+              <label className="text-sm font-medium">종료일</label>
+              <input type="date" value={form.endDate} onChange={e => update('endDate', e.target.value)}
+                className="w-full border rounded px-3 py-2 mt-1" required />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-sm font-medium">구분</label>
+              <select value={form.category} onChange={e => update('category', e.target.value)}
+                className="w-full border rounded px-3 py-2 mt-1">
+                {CATEGORIES.map(c => <option key={c.v} value={c.v}>{c.l}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="text-sm font-medium">일수</label>
+              <input type="number" step="0.5" min="0.5" value={form.days}
+                onChange={e => update('days', e.target.value)}
+                className="w-full border rounded px-3 py-2 mt-1" required />
+            </div>
+          </div>
+          <div>
+            <label className="text-sm font-medium">사유</label>
+            <input value={form.reason} onChange={e => update('reason', e.target.value)}
+              className="w-full border rounded px-3 py-2 mt-1" />
+          </div>
+          <div>
+            <label className="text-sm font-medium">비고</label>
+            <input value={form.note} onChange={e => update('note', e.target.value)}
+              className="w-full border rounded px-3 py-2 mt-1" />
+          </div>
+          <div className="flex gap-2 pt-2">
+            <button type="submit" disabled={saving}
+              className="flex-1 bg-blue-600 text-white py-2 rounded hover:bg-blue-700 disabled:opacity-50">
+              {saving ? '저장 중...' : '저장'}
+            </button>
+            <button type="button" onClick={onClose}
+              className="flex-1 border py-2 rounded hover:bg-gray-50">취소</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+```
+
+- [ ] **Step 5: `app/(dashboard)/employees/[id]/page.tsx` 에서 LeaveRecordTable + Modal 연결**
+
+기존 "← Task 7에서 구현" 주석 부분을 아래로 교체:
+
+```typescript
+// page.tsx 상단에 추가
+import LeaveRecordTable from '@/components/LeaveRecordTable'
+import LeaveRecordModal from '@/components/LeaveRecordModal'
+import TardyModal from '@/components/TardyModal'  // Task 8에서 구현
+
+// state 추가
+const [showModal, setShowModal] = useState(false)
+const [editRecord, setEditRecord] = useState<any>(null)
+const [showTardy, setShowTardy] = useState(false)
+
+async function handleDelete(recordId: string) {
+  if (!confirm('삭제하시겠습니까?')) return
+  await fetch(`/api/employees/${id}/leave-records/${recordId}`, { method: 'DELETE' })
+  load()
+}
+
+// 휴가 사용내역 섹션 교체
+<div className="bg-white rounded-lg shadow p-6">
+  <div className="flex justify-between items-center mb-4">
+    <h3 className="font-semibold text-lg">휴가 사용내역</h3>
+    <div className="flex gap-2">
+      <button onClick={() => setShowTardy(true)}
+        className="px-3 py-1.5 border rounded text-sm hover:bg-gray-50">지각 기록</button>
+      <button onClick={() => { setEditRecord(null); setShowModal(true) }}
+        className="px-3 py-1.5 bg-blue-600 text-white rounded text-sm hover:bg-blue-700">+ 추가</button>
+    </div>
+  </div>
+  <LeaveRecordTable
+    records={leaveRecords}
+    onEdit={r => { setEditRecord(r); setShowModal(true) }}
+    onDelete={handleDelete}
+  />
+</div>
+
+{showModal && (
+  <LeaveRecordModal
+    employeeId={id}
+    initial={editRecord}
+    onClose={() => setShowModal(false)}
+    onSaved={load}
+  />
+)}
+```
+
+- [ ] **Step 6: 브라우저 동작 확인**
+
+직원 상세 페이지 → "+ 추가" → 휴가 기록 입력 → 저장 → 테이블에 표시 확인
+잔여일수가 차감되는지 확인 (연차/월차/반차 카테고리만)
+
+- [ ] **Step 7: 커밋**
+
+```bash
+git add -A
+git commit -m "feat: leave records CRUD with modal UI"
+```
+
+---
+
+### Task 8: 지각 기록
+
+**Files:**
+- Create: `app/api/employees/[id]/tardy/route.ts`
+- Create: `components/TardyModal.tsx`
+
+**Interfaces:**
+- Consumes: `calculateTardyDeduction` from `@/lib/tardy`
+- Produces: `POST /api/employees/[id]/tardy` → `{ employee, deducted: boolean, autoRecord: LeaveRecord | null }`
+
+- [ ] **Step 1: `app/api/employees/[id]/tardy/route.ts` 작성**
+
+```typescript
+import { NextRequest, NextResponse } from 'next/server'
+import { getServerSession } from 'next-auth'
+import { authOptions } from '@/lib/auth'
+import { db } from '@/lib/db'
+import { calculateTardyDeduction } from '@/lib/tardy'
+
+export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+  const session = await getServerSession(authOptions)
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  const { date, note } = await req.json()
+
+  const employee = await db.employee.findUnique({ where: { id: params.id } })
+  if (!employee) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+
+  const { deductCount, newTardyCount } = calculateTardyDeduction(employee.tardyCount)
+
+  await db.employee.update({
+    where: { id: params.id },
+    data: { tardyCount: newTardyCount },
+  })
+
+  let autoRecord = null
+  if (deductCount > 0) {
+    const tardyDate = new Date(date)
+    autoRecord = await db.leaveRecord.create({
+      data: {
+        employeeId: params.id,
+        startDate: tardyDate,
+        endDate: tardyDate,
+        category: 'HALF',
+        days: 0.5 * deductCount,
+        reason: '지각 3회 차감',
+        note: note || null,
+        isAutoGenerated: true,
+      },
+    })
+  }
+
+  return NextResponse.json({ employee: { ...employee, tardyCount: newTardyCount }, deducted: deductCount > 0, autoRecord })
+}
+```
+
+- [ ] **Step 2: `components/TardyModal.tsx` 작성**
+
+```typescript
+'use client'
+import { useState } from 'react'
+
+export default function TardyModal({ employeeId, tardyCount, onClose, onSaved }: {
+  employeeId: string; tardyCount: number; onClose: () => void; onSaved: () => void
+}) {
+  const [date, setDate] = useState(new Date().toISOString().slice(0, 10))
+  const [dates, setDates] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [result, setResult] = useState<{ deducted: boolean; newCount: number } | null>(null)
+
+  const nextCount = tardyCount + 1
+  const willDeduct = nextCount % 3 === 0
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    setSaving(true)
+    const res = await fetch(`/api/employees/${employeeId}/tardy`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ date, note: dates || null }),
+    })
+    const data = await res.json()
+    setSaving(false)
+    setResult({ deducted: data.deducted, newCount: data.employee.tardyCount })
+    onSaved()
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+      <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-sm">
+        <h3 className="font-semibold text-lg mb-4">지각 기록</h3>
+        {result ? (
+          <div className="text-center space-y-3">
+            <p className="text-green-600 font-medium">누적 지각: {result.newCount}회</p>
+            {result.deducted && (
+              <p className="text-red-600 font-medium">반차(0.5일)가 자동 차감되었습니다.</p>
+            )}
+            <button onClick={onClose}
+              className="w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700">확인</button>
+          </div>
+        ) : (
+          <form onSubmit={handleSubmit} className="space-y-3">
+            <p className="text-sm text-gray-600">현재 누적 지각: <strong>{tardyCount}회</strong></p>
+            {willDeduct && (
+              <p className="text-sm text-red-600 bg-red-50 px-3 py-2 rounded">
+                이번 기록으로 3회가 되어 반차(0.5일)가 자동 차감됩니다.
+              </p>
+            )}
+            <div>
+              <label className="text-sm font-medium">지각 날짜</label>
+              <input type="date" value={date} onChange={e => setDate(e.target.value)}
+                className="w-full border rounded px-3 py-2 mt-1" required />
+            </div>
+            <div>
+              <label className="text-sm font-medium">지각 날짜 목록 (비고)</label>
+              <input value={dates} onChange={e => setDates(e.target.value)}
+                placeholder="예: 6/1, 6/5, 6/10"
+                className="w-full border rounded px-3 py-2 mt-1" />
+            </div>
+            <div className="flex gap-2 pt-2">
+              <button type="submit" disabled={saving}
+                className="flex-1 bg-blue-600 text-white py-2 rounded hover:bg-blue-700 disabled:opacity-50">
+                {saving ? '저장 중...' : '기록'}
+              </button>
+              <button type="button" onClick={onClose}
+                className="flex-1 border py-2 rounded hover:bg-gray-50">취소</button>
+            </div>
+          </form>
+        )}
+      </div>
+    </div>
+  )
+}
+```
+
+- [ ] **Step 3: Task 7에서 추가한 TardyModal 연결 확인**
+
+`app/(dashboard)/employees/[id]/page.tsx`에 이미 `showTardy` 상태와 `setShowTardy` 가 있음. 아래를 JSX에 추가:
+
+```typescript
+{showTardy && (
+  <TardyModal
+    employeeId={id}
+    tardyCount={employee.tardyCount}
+    onClose={() => setShowTardy(false)}
+    onSaved={load}
+  />
+)}
+```
+
+- [ ] **Step 4: 브라우저 동작 확인**
+
+지각 기록 버튼 → 날짜 입력 → 기록 → 누적 횟수 증가 확인
+3회가 될 때 반차 자동 차감 확인 (휴가 사용내역에 자동 항목 표시)
+
+- [ ] **Step 5: 커밋**
+
+```bash
+git add -A
+git commit -m "feat: tardy recording with auto half-day deduction"
+```
+
+---
+
+### Task 9: 달력 뷰
+
+**Files:**
+- Create: `app/api/calendar/route.ts`
+- Create: `components/CalendarView.tsx`
+- Create: `app/(dashboard)/calendar/page.tsx`
+
+**Interfaces:**
+- Produces: `GET /api/calendar?year=YYYY&month=M` → `{ records: Array<{ employeeId, employeeName, startDate, endDate, category, days }> }`
+
+- [ ] **Step 1: `app/api/calendar/route.ts` 작성**
+
+```typescript
+import { NextRequest, NextResponse } from 'next/server'
+import { getServerSession } from 'next-auth'
+import { authOptions } from '@/lib/auth'
+import { db } from '@/lib/db'
+
+export async function GET(req: NextRequest) {
+  const session = await getServerSession(authOptions)
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  const { searchParams } = new URL(req.url)
+  const year = parseInt(searchParams.get('year') ?? new Date().getFullYear().toString())
+  const month = parseInt(searchParams.get('month') ?? (new Date().getMonth() + 1).toString())
+
+  const start = new Date(year, month - 1, 1)
+  const end = new Date(year, month, 1)
+
+  const records = await db.leaveRecord.findMany({
+    where: { startDate: { gte: start, lt: end } },
+    include: { employee: { select: { id: true, name: true } } },
+    orderBy: { startDate: 'asc' },
+  })
+
+  return NextResponse.json({
+    records: records.map(r => ({
+      id: r.id, employeeId: r.employee.id, employeeName: r.employee.name,
+      startDate: r.startDate, endDate: r.endDate, category: r.category, days: r.days,
+    })),
+  })
+}
+```
+
+- [ ] **Step 2: `components/CalendarView.tsx` 작성**
+
+```typescript
+'use client'
+
+type CalRecord = {
+  id: string; employeeId: string; employeeName: string
+  startDate: string; endDate: string; category: string; days: number
+}
+
+const CAT_COLOR: Record<string, string> = {
+  ANNUAL:'bg-blue-200', MONTHLY:'bg-green-200', HALF:'bg-yellow-200',
+  SICK:'bg-purple-200', PUBLIC:'bg-indigo-200', ABSENCE:'bg-red-200', OTHER:'bg-gray-200',
+}
+const CAT_LABEL: Record<string, string> = {
+  ANNUAL:'연차', MONTHLY:'월차', HALF:'반차', SICK:'병가', PUBLIC:'공가', ABSENCE:'결근', OTHER:'기타',
+}
+
+const DAYS_KO = ['일','월','화','수','목','금','토']
+
+export default function CalendarView({ year, month, records }: {
+  year: number; month: number; records: CalRecord[]
+}) {
+  const firstDay = new Date(year, month - 1, 1).getDay()
+  const daysInMonth = new Date(year, month, 0).getDate()
+  const cells: (number | null)[] = [...Array(firstDay).fill(null), ...Array.from({ length: daysInMonth }, (_, i) => i + 1)]
+  while (cells.length % 7 !== 0) cells.push(null)
+
+  function getRecordsForDay(day: number) {
+    const d = new Date(year, month - 1, day)
+    return records.filter(r => {
+      const s = new Date(r.startDate)
+      const e = new Date(r.endDate)
+      return d >= new Date(s.getFullYear(), s.getMonth(), s.getDate()) &&
+             d <= new Date(e.getFullYear(), e.getMonth(), e.getDate())
+    })
+  }
+
+  return (
+    <div>
+      <div className="grid grid-cols-7 mb-1">
+        {DAYS_KO.map(d => (
+          <div key={d} className={`text-center text-sm font-medium py-2 ${d === '일' ? 'text-red-500' : d === '토' ? 'text-blue-500' : 'text-gray-600'}`}>{d}</div>
+        ))}
+      </div>
+      <div className="grid grid-cols-7 border-l border-t">
+        {cells.map((day, i) => {
+          const dayRecords = day ? getRecordsForDay(day) : []
+          const dow = i % 7
+          return (
+            <div key={i} className="border-r border-b min-h-[100px] p-1">
+              {day && (
+                <>
+                  <div className={`text-sm font-medium mb-1 ${dow === 0 ? 'text-red-500' : dow === 6 ? 'text-blue-500' : ''}`}>{day}</div>
+                  <div className="space-y-0.5">
+                    {dayRecords.map(r => (
+                      <div key={r.id} className={`text-xs px-1 py-0.5 rounded truncate ${CAT_COLOR[r.category]}`}
+                        title={`${r.employeeName} - ${CAT_LABEL[r.category]}`}>
+                        {r.employeeName} {CAT_LABEL[r.category]}
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+```
+
+- [ ] **Step 3: `app/(dashboard)/calendar/page.tsx` 작성**
+
+```typescript
+'use client'
+import { useEffect, useState } from 'react'
+import CalendarView from '@/components/CalendarView'
+
+export default function CalendarPage() {
+  const now = new Date()
+  const [year, setYear] = useState(now.getFullYear())
+  const [month, setMonth] = useState(now.getMonth() + 1)
+  const [records, setRecords] = useState([])
+
+  useEffect(() => {
+    fetch(`/api/calendar?year=${year}&month=${month}`)
+      .then(r => r.json()).then(d => setRecords(d.records ?? []))
+  }, [year, month])
+
+  function prev() {
+    if (month === 1) { setYear(y => y - 1); setMonth(12) }
+    else setMonth(m => m - 1)
+  }
+  function next() {
+    if (month === 12) { setYear(y => y + 1); setMonth(1) }
+    else setMonth(m => m + 1)
+  }
+
+  return (
+    <div>
+      <div className="flex items-center gap-4 mb-6">
+        <button onClick={prev} className="px-3 py-1.5 border rounded hover:bg-gray-50">‹ 이전</button>
+        <h2 className="text-2xl font-bold">{year}년 {month}월</h2>
+        <button onClick={next} className="px-3 py-1.5 border rounded hover:bg-gray-50">다음 ›</button>
+      </div>
+      <div className="bg-white rounded-lg shadow p-4">
+        <CalendarView year={year} month={month} records={records} />
+      </div>
+    </div>
+  )
+}
+```
+
+- [ ] **Step 4: 브라우저 동작 확인**
+
+달력 페이지에서 휴가 기록이 날짜에 표시되는지 확인. 이전/다음 월 이동 확인.
+
+- [ ] **Step 5: 커밋**
+
+```bash
+git add -A
+git commit -m "feat: monthly calendar view with all employee leaves"
+```
+
+---
+
+### Task 10: 엑셀 내보내기
+
+**Files:**
+- Create: `lib/excel-export.ts`
+- Create: `app/api/export/route.ts`
+
+**Interfaces:**
+- Consumes: `GET /api/employees` 데이터 구조
+- Produces: `GET /api/export` → `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`
+
+- [ ] **Step 1: `lib/excel-export.ts` 작성**
+
+```typescript
+import ExcelJS from 'exceljs'
+
+const COMPANY_LABEL: Record<string, string> = { SKYCAMP: '스카이캠프', SKYAN: '스카이앤' }
+const DEPT_LABEL: Record<string, string> = { SALES: '영업부', SALES_SUPPORT: '영업지원부' }
+const CAT_LABEL: Record<string, string> = {
+  ANNUAL:'연차', MONTHLY:'월차', HALF:'반차', SICK:'병가',
+  PUBLIC:'공가', ABSENCE:'결근', OTHER:'기타',
+}
+
+export async function buildExcel(employees: any[]): Promise<Buffer> {
+  const wb = new ExcelJS.Workbook()
+
+  // ── 전체 시트 ──
+  const wsAll = wb.addWorksheet('전체')
+  wsAll.addRow(['번호','회사명','부서','이름','직급','입사일','퇴사일','적용기간',
+    '발생','추가','공제','현재','사용','잔여',
+    '1월','2월','3월','4월','5월','6월','7월','8월','9월','10월','11월','12월'])
+
+  employees.forEach((emp, i) => {
+    const monthlyUsage = Array(12).fill(0)
+    emp.leaveRecords?.forEach((r: any) => {
+      const m = new Date(r.startDate).getMonth()
+      monthlyUsage[m] += r.days
+    })
+    wsAll.addRow([
+      i + 1, COMPANY_LABEL[emp.company], DEPT_LABEL[emp.department], emp.name, emp.position,
+      new Date(emp.hireDate).toLocaleDateString('ko-KR'),
+      emp.terminationDate ? new Date(emp.terminationDate).toLocaleDateString('ko-KR') : '',
+      `${new Date(emp.periodStart).toLocaleDateString('ko-KR')}~${new Date(emp.periodEnd).toLocaleDateString('ko-KR')}`,
+      emp.allocatedDays, emp.bonusDays, emp.deductionDays,
+      emp.allocatedDays + emp.bonusDays - emp.deductionDays,
+      emp.usedDays, emp.remainingDays,
+      ...monthlyUsage,
+    ])
+  })
+
+  // ── 개인 시트 ──
+  for (const emp of employees) {
+    const ws = wb.addWorksheet(emp.name)
+    ws.addRow([`개인 ${emp.department === 'SALES' ? '월차' : '연차'}관리 - ${emp.name}`])
+    ws.addRow([])
+    ws.addRow([
+      '성명', emp.name, '입사일', new Date(emp.hireDate).toLocaleDateString('ko-KR'),
+      '적용기간', `${new Date(emp.periodStart).toLocaleDateString('ko-KR')}~${new Date(emp.periodEnd).toLocaleDateString('ko-KR')}`,
+    ])
+    ws.addRow([
+      '발생', emp.allocatedDays, '추가', emp.bonusDays, '공제', emp.deductionDays,
+      '사용', emp.usedDays, '잔여', emp.remainingDays,
+    ])
+    ws.addRow([])
+    ws.addRow(['시작일','종료일','구분','일수','사유','비고'])
+    emp.leaveRecords?.forEach((r: any) => {
+      ws.addRow([
+        new Date(r.startDate).toLocaleDateString('ko-KR'),
+        new Date(r.endDate).toLocaleDateString('ko-KR'),
+        CAT_LABEL[r.category],
+        r.days,
+        r.reason ?? '',
+        r.note ?? '',
+      ])
+    })
+  }
+
+  const buffer = await wb.xlsx.writeBuffer()
+  return Buffer.from(buffer)
+}
+```
+
+- [ ] **Step 2: `app/api/export/route.ts` 작성**
+
+```typescript
+import { NextResponse } from 'next/server'
+import { getServerSession } from 'next-auth'
+import { authOptions } from '@/lib/auth'
+import { db } from '@/lib/db'
+import { calculateAnnualLeave, calculateMonthlyLeave, getCurrentPeriod } from '@/lib/leave-calculator'
+import { buildExcel } from '@/lib/excel-export'
+import { Department } from '@prisma/client'
+
+export async function GET() {
+  const session = await getServerSession(authOptions)
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  const employees = await db.employee.findMany({
+    orderBy: { name: 'asc' },
+    include: {
+      leaveBalances: true,
+      leaveRecords: { orderBy: { startDate: 'asc' } },
+    },
+  })
+
+  const today = new Date()
+  const data = employees.map(emp => {
+    const { start, end } = getCurrentPeriod(emp.hireDate, today)
+    const balance = emp.leaveBalances.find(b => b.periodStart.getTime() === start.getTime())
+    const absenceDates = emp.leaveRecords.filter(r => r.category === 'ABSENCE').map(r => r.startDate)
+    const allocatedDays = balance?.allocatedDaysOverride ??
+      (emp.department === Department.SALES_SUPPORT
+        ? calculateAnnualLeave(emp.hireDate, today)
+        : calculateMonthlyLeave(start, absenceDates, today))
+    const usedDays = emp.leaveRecords
+      .filter(r => ['ANNUAL','MONTHLY','HALF'].includes(r.category) && r.startDate >= start && r.startDate < end)
+      .reduce((s, r) => s + r.days, 0)
+    return {
+      ...emp, periodStart: start, periodEnd: end,
+      allocatedDays, bonusDays: balance?.bonusDays ?? 0,
+      deductionDays: balance?.deductionDays ?? 0, usedDays,
+      remainingDays: allocatedDays + (balance?.bonusDays ?? 0) - (balance?.deductionDays ?? 0) - usedDays,
+    }
+  })
+
+  const buffer = await buildExcel(data)
+  return new NextResponse(buffer, {
+    headers: {
+      'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent('연월차관리')}_${today.toISOString().slice(0,10)}.xlsx`,
+    },
+  })
+}
+```
+
+- [ ] **Step 3: 브라우저 동작 확인**
+
+대시보드 → "엑셀 내보내기" 클릭 → 파일 다운로드 확인. Excel로 열어서 시트 구조 확인.
+
+- [ ] **Step 4: 커밋**
+
+```bash
+git add -A
+git commit -m "feat: Excel export with all-employee summary and individual sheets"
+```
+
+---
+
+### Task 11: 관리자 설정
+
+**Files:**
+- Create: `app/api/admin/route.ts`
+- Create: `app/api/admin/[id]/route.ts`
+- Create: `app/(dashboard)/settings/page.tsx`
+
+- [ ] **Step 1: `app/api/admin/route.ts` 작성**
+
+```typescript
+import { NextRequest, NextResponse } from 'next/server'
+import { getServerSession } from 'next-auth'
+import { authOptions } from '@/lib/auth'
+import { db } from '@/lib/db'
+import bcrypt from 'bcryptjs'
+
+export async function GET() {
+  const session = await getServerSession(authOptions)
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  const admins = await db.adminUser.findMany({
+    select: { id: true, name: true, email: true, createdAt: true },
+    orderBy: { createdAt: 'asc' },
+  })
+  return NextResponse.json({ admins })
+}
+
+export async function POST(req: NextRequest) {
+  const session = await getServerSession(authOptions)
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  const { name, email, password } = await req.json()
+  const exists = await db.adminUser.findUnique({ where: { email } })
+  if (exists) return NextResponse.json({ error: '이미 존재하는 이메일' }, { status: 400 })
+
+  const passwordHash = await bcrypt.hash(password, 10)
+  const admin = await db.adminUser.create({
+    data: { name, email, passwordHash },
+    select: { id: true, name: true, email: true, createdAt: true },
+  })
+  return NextResponse.json({ admin }, { status: 201 })
+}
+```
+
+- [ ] **Step 2: `app/api/admin/[id]/route.ts` 작성**
+
+```typescript
+import { NextRequest, NextResponse } from 'next/server'
+import { getServerSession } from 'next-auth'
+import { authOptions } from '@/lib/auth'
+import { db } from '@/lib/db'
+import bcrypt from 'bcryptjs'
+
+export async function PUT(req: NextRequest, { params }: { params: { id: string } }) {
+  const session = await getServerSession(authOptions)
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  const { name, password } = await req.json()
+  const data: any = { name }
+  if (password) data.passwordHash = await bcrypt.hash(password, 10)
+
+  const admin = await db.adminUser.update({
+    where: { id: params.id },
+    data,
+    select: { id: true, name: true, email: true, createdAt: true },
+  })
+  return NextResponse.json({ admin })
+}
+
+export async function DELETE(_req: NextRequest, { params }: { params: { id: string } }) {
+  const session = await getServerSession(authOptions)
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  const count = await db.adminUser.count()
+  if (count <= 1) return NextResponse.json({ error: '마지막 관리자는 삭제할 수 없습니다' }, { status: 400 })
+
+  await db.adminUser.delete({ where: { id: params.id } })
+  return NextResponse.json({ success: true })
+}
+```
+
+- [ ] **Step 3: `app/(dashboard)/settings/page.tsx` 작성**
+
+```typescript
+'use client'
+import { useEffect, useState } from 'react'
+
+type Admin = { id: string; name: string; email: string; createdAt: string }
+
+export default function SettingsPage() {
+  const [admins, setAdmins] = useState<Admin[]>([])
+  const [showForm, setShowForm] = useState(false)
+  const [form, setForm] = useState({ name: '', email: '', password: '' })
+  const [saving, setSaving] = useState(false)
+
+  function load() {
+    fetch('/api/admin').then(r => r.json()).then(d => setAdmins(d.admins ?? []))
+  }
+  useEffect(() => { load() }, [])
+
+  async function addAdmin(e: React.FormEvent) {
+    e.preventDefault()
+    setSaving(true)
+    const res = await fetch('/api/admin', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form),
+    })
+    setSaving(false)
+    if (res.ok) { setShowForm(false); setForm({ name: '', email: '', password: '' }); load() }
+    else { const d = await res.json(); alert(d.error) }
+  }
+
+  async function deleteAdmin(id: string) {
+    if (!confirm('삭제하시겠습니까?')) return
+    const res = await fetch(`/api/admin/${id}`, { method: 'DELETE' })
+    if (res.ok) load()
+    else { const d = await res.json(); alert(d.error) }
+  }
+
+  return (
+    <div className="max-w-2xl">
+      <div className="flex justify-between items-center mb-6">
+        <h2 className="text-2xl font-bold">관리자 설정</h2>
+        <button onClick={() => setShowForm(!showForm)}
+          className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm">
+          {showForm ? '취소' : '+ 관리자 추가'}
+        </button>
+      </div>
+
+      {showForm && (
+        <form onSubmit={addAdmin} className="bg-white rounded-lg shadow p-6 mb-6 space-y-3">
+          <h3 className="font-medium">새 관리자 추가</h3>
+          {[['이름','name','text'],['이메일','email','email'],['비밀번호','password','password']].map(([label, key, type]) => (
+            <div key={key}>
+              <label className="text-sm font-medium">{label}</label>
+              <input type={type} value={(form as any)[key]}
+                onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))}
+                className="w-full border rounded px-3 py-2 mt-1" required />
+            </div>
+          ))}
+          <button type="submit" disabled={saving}
+            className="w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700 disabled:opacity-50">
+            {saving ? '추가 중...' : '추가'}
+          </button>
+        </form>
+      )}
+
+      <div className="bg-white rounded-lg shadow">
+        <table className="min-w-full text-sm">
+          <thead className="bg-gray-100">
+            <tr>
+              {['이름','이메일','등록일',''].map(h => (
+                <th key={h} className="px-4 py-3 text-left font-medium text-gray-600">{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {admins.map(admin => (
+              <tr key={admin.id} className="border-t hover:bg-gray-50">
+                <td className="px-4 py-3">{admin.name}</td>
+                <td className="px-4 py-3">{admin.email}</td>
+                <td className="px-4 py-3 text-gray-500">{new Date(admin.createdAt).toLocaleDateString('ko-KR')}</td>
+                <td className="px-4 py-3">
+                  <button onClick={() => deleteAdmin(admin.id)}
+                    className="text-red-600 hover:underline text-xs">삭제</button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+```
+
+- [ ] **Step 4: 브라우저 동작 확인**
+
+설정 페이지 → 관리자 목록 표시 확인. 새 관리자 추가 → 로그아웃 → 새 계정으로 로그인 확인.
+
+- [ ] **Step 5: 커밋**
+
+```bash
+git add -A
+git commit -m "feat: admin account management (add/delete)"
+```
+
+---
+
+### Task 12: Vercel 배포
+
+**Files:**
+- Modify: `.gitignore` (`.env.local` 확인)
+
+- [ ] **Step 1: `.gitignore` 확인**
+
+`.env.local`이 `.gitignore`에 포함되어 있는지 확인. Next.js 기본 `.gitignore`에는 이미 포함됨.
+
+- [ ] **Step 2: GitHub 저장소 생성 및 push**
+
+GitHub에서 새 저장소 생성 후:
+```bash
+git remote add origin https://github.com/<username>/<repo>.git
+git push -u origin main
+```
+
+- [ ] **Step 3: Vercel 프로젝트 생성**
+
+1. [vercel.com](https://vercel.com) → "Add New Project" → GitHub 저장소 연결
+2. Framework Preset: Next.js (자동 감지)
+3. Environment Variables 설정:
+   - `DATABASE_URL` = Neon 콘솔에서 복사한 Connection String (pooling URL 사용)
+   - `NEXTAUTH_SECRET` = `openssl rand -base64 32` 출력값
+   - `NEXTAUTH_URL` = `https://<your-vercel-domain>.vercel.app`
+4. Deploy 클릭
+
+- [ ] **Step 4: 배포 후 DB 마이그레이션**
+
+로컬에서 Neon DB에 스키마 적용 (이미 로컬에서 완료됐으면 스킵):
+```bash
+npx prisma migrate deploy
+npx prisma db seed
+```
+
+- [ ] **Step 5: 배포된 사이트 동작 확인**
+
+- 로그인 동작 확인 (`admin@skycamp.com` / `admin1234`)
+- 직원 추가, 휴가 기록, 달력, 엑셀 내보내기 동작 확인
+
+- [ ] **Step 6: 최종 커밋**
+
+```bash
+git add -A
+git commit -m "chore: final deployment configuration"
+git push
+```
+
+---
+
+## 자체 검토 (Spec Coverage)
+
+| 스펙 요구사항 | 커버 Task |
+|---|---|
+| 영업지원부 근로기준법 연차 | Task 3, 5 |
+| 영업부 월차 입사일 기준 | Task 3, 5 |
+| 자동 계산 + 수동 override | Task 5, 6 |
+| 지각 3회 반차 자동 차감 (누적) | Task 4, 8 |
+| 관리자 로그인 (복수 계정) | Task 2, 11 |
+| 대시보드 직원 현황 | Task 6 |
+| 직원 상세 (기본정보 + 잔액 + 기록) | Task 6, 7 |
+| 휴가 추가/수정/삭제 | Task 7 |
+| 달력 뷰 | Task 9 |
+| 엑셀 내보내기 | Task 10 |
+| 퇴사자 소프트 처리 | Task 5, 6 |
+| Vercel 배포 | Task 12 |
