@@ -4,10 +4,11 @@
 ## Tasks
 
 - [x] Task 1: 프로젝트 초기 설정 & 데이터베이스 스키마 (commit: 72e9a47, review clean — FK false positive confirmed)
-- [ ] Task 2: 인증 (NextAuth.js)
-- [ ] Task 3: 연차 계산 로직 (TDD)
-- [ ] Task 4: 지각 처리 로직 (TDD)
-- [ ] Task 5: Employee CRUD API
+- [x] Task 2: 인증 (NextAuth.js) (commits: 10a38a6..a0e024b, fix: providers split)
+- [x] Task 3: 연차 계산 로직 (TDD) (commits: 7f73c28, review clean — 21/21 pass)
+- [x] Task 4: 지각 처리 로직 (TDD) (commits: cb7d6ca, review clean — 21/21 pass)
+  Minor: absence on period boundary semantics — clarify with business later
+- [x] Task 5: Employee CRUD API (commit: f8862a8, review clean)
 - [ ] Task 6: 대시보드 & 직원 페이지 UI
 - [ ] Task 7: 휴가 기록 CRUD
 - [ ] Task 8: 지각 기록

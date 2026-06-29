@@ -1,0 +1,555 @@
+﻿4686572 feat: dashboard, employee list/detail/create UI
+
+ app/(dashboard)/employees/[id]/page.tsx |  54 +++++++++++++++++
+ app/(dashboard)/employees/new/page.tsx  |  10 ++++
+ app/(dashboard)/layout.tsx              |  31 ++++++++++
+ app/(dashboard)/page.tsx                |  44 ++++++++++++++
+ app/api/employees/[id]/route.ts         |  27 +++++----
+ app/page.tsx                            | 101 --------------------------------
+ components/EmployeeForm.tsx             |  69 ++++++++++++++++++++++
+ components/EmployeeTable.tsx            |  55 +++++++++++++++++
+ components/LeaveBalanceCard.tsx         |  88 ++++++++++++++++++++++++++++
+ 9 files changed, 367 insertions(+), 112 deletions(-)
+
+diff --git a/app/(dashboard)/employees/[id]/page.tsx b/app/(dashboard)/employees/[id]/page.tsx
+new file mode 100644
+index 0000000..d50f53c
+--- /dev/null
++++ b/app/(dashboard)/employees/[id]/page.tsx
+@@ -0,0 +1,54 @@
++'use client'
++import { useCallback, useEffect, useState } from 'react'
++import { useParams, useRouter } from 'next/navigation'
++import LeaveBalanceCard from '@/components/LeaveBalanceCard'
++
++const COMPANY_LABEL: Record<string, string> = { SKYCAMP: '스카이캠프', SKYAN: '스카이앤' }
++const DEPT_LABEL: Record<string, string> = { SALES: '영업부', SALES_SUPPORT: '영업지원부' }
++
++export default function EmployeeDetailPage() {
++  const { id } = useParams<{ id: string }>()
++  const router = useRouter()
++  // eslint-disable-next-line @typescript-eslint/no-explicit-any
++  const [data, setData] = useState<any>(null)
++
++  const load = useCallback(() => {
++    fetch(`/api/employees/${id}`).then(r => r.json()).then(setData)
++  }, [id])
++
++  useEffect(() => { load() }, [load])
++
++  if (!data) return <p className="p-8">불러오는 중...</p>
++
++  const { employee, balance } = data
++
++  return (
++    <div className="max-w-4xl space-y-6">
++      <div className="flex justify-between items-center">
++        <h2 className="text-2xl font-bold">{employee.name}</h2>
++        <div className="flex gap-2">
++          <button onClick={() => router.push(`/employees/${id}/edit`)}
++            className="px-4 py-2 border rounded hover:bg-gray-50 text-sm">수정</button>
++          <button onClick={() => router.back()}
++            className="px-4 py-2 border rounded hover:bg-gray-50 text-sm">뒤로</button>
++        </div>
++      </div>
++
++      <div className="bg-white rounded-lg shadow p-6 grid grid-cols-2 gap-4 text-sm">
++        <div><span className="text-gray-500">회사</span> {COMPANY_LABEL[employee.company]}</div>
++        <div><span className="text-gray-500">부서</span> {DEPT_LABEL[employee.department]}</div>
++        <div><span className="text-gray-500">직책</span> {employee.position}</div>
++        <div><span className="text-gray-500">지각 횟수</span> {employee.tardyCount}회</div>
++        <div><span className="text-gray-500">입사일</span> {new Date(employee.hireDate).toLocaleDateString('ko-KR')}</div>
++        <div><span className="text-gray-500">퇴사일</span> {employee.terminationDate ? new Date(employee.terminationDate).toLocaleDateString('ko-KR') : '-'}</div>
++      </div>
++
++      <LeaveBalanceCard balance={balance} employeeId={id} onUpdated={load} />
++
++      <div className="bg-white rounded-lg shadow p-6">
++        <h3 className="font-semibold text-lg mb-4">휴가 사용내역</h3>
++        <p className="text-sm text-gray-400">← Task 7에서 구현</p>
++      </div>
++    </div>
++  )
++}
+diff --git a/app/(dashboard)/employees/new/page.tsx b/app/(dashboard)/employees/new/page.tsx
+new file mode 100644
+index 0000000..fc01bff
+--- /dev/null
++++ b/app/(dashboard)/employees/new/page.tsx
+@@ -0,0 +1,10 @@
++import EmployeeForm from '@/components/EmployeeForm'
++
++export default function NewEmployeePage() {
++  return (
++    <div>
++      <h2 className="text-2xl font-bold mb-6">직원 추가</h2>
++      <EmployeeForm />
++    </div>
++  )
++}
+diff --git a/app/(dashboard)/layout.tsx b/app/(dashboard)/layout.tsx
+new file mode 100644
+index 0000000..a5738dc
+--- /dev/null
++++ b/app/(dashboard)/layout.tsx
+@@ -0,0 +1,31 @@
++'use client'
++import Link from 'next/link'
++import { usePathname } from 'next/navigation'
++import { signOut } from 'next-auth/react'
++
++export default function DashboardLayout({ children }: { children: React.ReactNode }) {
++  const pathname = usePathname()
++  const links = [
++    { href: '/', label: '대시보드' },
++    { href: '/calendar', label: '캘린더' },
++    { href: '/settings', label: '관리자 설정' },
++  ]
++  return (
++    <div className="min-h-screen flex">
++      <aside className="w-48 bg-gray-900 text-white flex flex-col p-4">
++        <h1 className="text-lg font-bold mb-6">연월차 관리</h1>
++        <nav className="flex-1 space-y-1">
++          {links.map(l => (
++            <Link key={l.href} href={l.href}
++              className={`block px-3 py-2 rounded text-sm ${pathname === l.href ? 'bg-blue-600' : 'hover:bg-gray-700'}`}>
++              {l.label}
++            </Link>
++          ))}
++        </nav>
++        <button onClick={() => signOut({ callbackUrl: '/login' })}
++          className="text-sm text-gray-400 hover:text-white mt-4">로그아웃</button>
++      </aside>
++      <main className="flex-1 p-8 bg-gray-50">{children}</main>
++    </div>
++  )
++}
+diff --git a/app/(dashboard)/page.tsx b/app/(dashboard)/page.tsx
+new file mode 100644
+index 0000000..73d26ab
+--- /dev/null
++++ b/app/(dashboard)/page.tsx
+@@ -0,0 +1,44 @@
++'use client'
++import { useEffect, useState } from 'react'
++import Link from 'next/link'
++import EmployeeTable from '@/components/EmployeeTable'
++
++export default function DashboardPage() {
++  const [employees, setEmployees] = useState([])
++  const [loading, setLoading] = useState(true)
++
++  useEffect(() => {
++    fetch('/api/employees').then(r => r.json()).then(d => {
++      setEmployees(d.employees)
++      setLoading(false)
++    })
++  }, [])
++
++  async function handleExport() {
++    const res = await fetch('/api/export')
++    const blob = await res.blob()
++    const url = URL.createObjectURL(blob)
++    const a = document.createElement('a')
++    a.href = url
++    a.download = `연월차현황_${new Date().toISOString().slice(0, 10)}.xlsx`
++    a.click()
++    URL.revokeObjectURL(url)
++  }
++
++  return (
++    <div>
++      <div className="flex justify-between items-center mb-6">
++        <h2 className="text-2xl font-bold">직원 연월차 현황</h2>
++        <div className="flex gap-2">
++          <button onClick={handleExport}
++            className="px-4 py-2 border rounded hover:bg-gray-100 text-sm">엑셀 다운로드</button>
++          <Link href="/employees/new"
++            className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm">
++            + 직원 추가
++          </Link>
++        </div>
++      </div>
++      {loading ? <p>불러오는 중...</p> : <EmployeeTable employees={employees} />}
++    </div>
++  )
++}
+diff --git a/app/api/employees/[id]/route.ts b/app/api/employees/[id]/route.ts
+index d09c86d..896d66e 100644
+--- a/app/api/employees/[id]/route.ts
++++ b/app/api/employees/[id]/route.ts
+@@ -69,21 +69,26 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
+ 
+   const body = await req.json()
+   const { name, company, department, position, hireDate, terminationDate,
+           allocatedDaysOverride, bonusDays, deductionDays, balanceNote } = body
+ 
+-  const employee = await db.employee.update({
+-    where: { id: params.id },
+-    data: {
+-      name,
+-      company,
+-      department,
+-      position,
+-      hireDate: new Date(hireDate),
+-      terminationDate: terminationDate ? new Date(terminationDate) : null,
+-    },
+-  })
++  // Only update employee fields when they are provided (EmployeeForm sends them;
++  // LeaveBalanceCard only sends balance fields)
++  const employeeData: Record<string, unknown> = {}
++  if (name !== undefined) employeeData.name = name
++  if (company !== undefined) employeeData.company = company
++  if (department !== undefined) employeeData.department = department
++  if (position !== undefined) employeeData.position = position
++  if (hireDate !== undefined) employeeData.hireDate = new Date(hireDate)
++  if ('terminationDate' in body) {
++    employeeData.terminationDate = terminationDate ? new Date(terminationDate) : null
++  }
++
++  const hasEmployeeFields = Object.keys(employeeData).length > 0
++  const employee = hasEmployeeFields
++    ? await db.employee.update({ where: { id: params.id }, data: employeeData })
++    : await db.employee.findUniqueOrThrow({ where: { id: params.id } })
+ 
+   if (allocatedDaysOverride !== undefined || bonusDays !== undefined || deductionDays !== undefined) {
+     const today = new Date()
+     const { start, end } = getCurrentPeriod(employee.hireDate, today)
+     await db.leaveBalance.upsert({
+diff --git a/app/page.tsx b/app/page.tsx
+deleted file mode 100644
+index 433c8aa..0000000
+--- a/app/page.tsx
++++ /dev/null
+@@ -1,101 +0,0 @@
+-import Image from "next/image";
+-
+-export default function Home() {
+-  return (
+-    <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
+-      <main className="flex flex-col gap-8 row-start-2 items-center sm:items-start">
+-        <Image
+-          className="dark:invert"
+-          src="https://nextjs.org/icons/next.svg"
+-          alt="Next.js logo"
+-          width={180}
+-          height={38}
+-          priority
+-        />
+-        <ol className="list-inside list-decimal text-sm text-center sm:text-left font-[family-name:var(--font-geist-mono)]">
+-          <li className="mb-2">
+-            Get started by editing{" "}
+-            <code className="bg-black/[.05] dark:bg-white/[.06] px-1 py-0.5 rounded font-semibold">
+-              app/page.tsx
+-            </code>
+-            .
+-          </li>
+-          <li>Save and see your changes instantly.</li>
+-        </ol>
+-
+-        <div className="flex gap-4 items-center flex-col sm:flex-row">
+-          <a
+-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5"
+-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
+-            target="_blank"
+-            rel="noopener noreferrer"
+-          >
+-            <Image
+-              className="dark:invert"
+-              src="https://nextjs.org/icons/vercel.svg"
+-              alt="Vercel logomark"
+-              width={20}
+-              height={20}
+-            />
+-            Deploy now
+-          </a>
+-          <a
+-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:min-w-44"
+-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
+-            target="_blank"
+-            rel="noopener noreferrer"
+-          >
+-            Read our docs
+-          </a>
+-        </div>
+-      </main>
+-      <footer className="row-start-3 flex gap-6 flex-wrap items-center justify-center">
+-        <a
+-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
+-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
+-          target="_blank"
+-          rel="noopener noreferrer"
+-        >
+-          <Image
+-            aria-hidden
+-            src="https://nextjs.org/icons/file.svg"
+-            alt="File icon"
+-            width={16}
+-            height={16}
+-          />
+-          Learn
+-        </a>
+-        <a
+-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
+-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
+-          target="_blank"
+-          rel="noopener noreferrer"
+-        >
+-          <Image
+-            aria-hidden
+-            src="https://nextjs.org/icons/window.svg"
+-            alt="Window icon"
+-            width={16}
+-            height={16}
+-          />
+-          Examples
+-        </a>
+-        <a
+-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
+-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
+-          target="_blank"
+-          rel="noopener noreferrer"
+-        >
+-          <Image
+-            aria-hidden
+-            src="https://nextjs.org/icons/globe.svg"
+-            alt="Globe icon"
+-            width={16}
+-            height={16}
+-          />
+-          Go to nextjs.org →
+-        </a>
+-      </footer>
+-    </div>
+-  );
+-}
+diff --git a/components/EmployeeForm.tsx b/components/EmployeeForm.tsx
+new file mode 100644
+index 0000000..c903222
+--- /dev/null
++++ b/components/EmployeeForm.tsx
+@@ -0,0 +1,69 @@
++'use client'
++import { useState } from 'react'
++import { useRouter } from 'next/navigation'
++
++type FormData = {
++  name: string; company: string; department: string; position: string
++  hireDate: string; terminationDate: string
++}
++
++export default function EmployeeForm({ initial, id }: { initial?: Partial<FormData>; id?: string }) {
++  const router = useRouter()
++  const [form, setForm] = useState<FormData>({
++    name: '', company: 'SKYCAMP', department: 'SALES', position: '사원',
++    hireDate: '', terminationDate: '', ...initial,
++  })
++  const [saving, setSaving] = useState(false)
++
++  function update(field: keyof FormData, value: string) {
++    setForm(f => ({ ...f, [field]: value }))
++  }
++
++  async function handleSubmit(e: React.FormEvent) {
++    e.preventDefault()
++    setSaving(true)
++    const body = { ...form, terminationDate: form.terminationDate || null }
++    if (id) {
++      await fetch(`/api/employees/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
++    } else {
++      await fetch('/api/employees', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
++    }
++    setSaving(false)
++    router.push('/')
++    router.refresh()
++  }
++
++  const field = (label: string, key: keyof FormData, type = 'text', opts?: { options?: {v:string,l:string}[] }) => (
++    <div key={key}>
++      <label className="block text-sm font-medium mb-1">{label}</label>
++      {opts?.options ? (
++        <select value={form[key]} onChange={e => update(key, e.target.value)}
++          className="w-full border rounded px-3 py-2">
++          {opts.options.map(o => <option key={o.v} value={o.v}>{o.l}</option>)}
++        </select>
++      ) : (
++        <input type={type} value={form[key]} onChange={e => update(key, e.target.value)}
++          className="w-full border rounded px-3 py-2" required={key === 'name' || key === 'hireDate'} />
++      )}
++    </div>
++  )
++
++  return (
++    <form onSubmit={handleSubmit} className="max-w-lg bg-white p-6 rounded-lg shadow space-y-4">
++      {field('이름', 'name')}
++      {field('회사', 'company', 'text', { options: [{v:'SKYCAMP',l:'스카이캠프'},{v:'SKYAN',l:'스카이앤'}] })}
++      {field('부서', 'department', 'text', { options: [{v:'SALES',l:'영업부'},{v:'SALES_SUPPORT',l:'영업지원부'}] })}
++      {field('직책', 'position')}
++      {field('입사일', 'hireDate', 'date')}
++      {field('퇴사일 (선택)', 'terminationDate', 'date')}
++      <div className="flex gap-2">
++        <button type="submit" disabled={saving}
++          className="flex-1 bg-blue-600 text-white py-2 rounded hover:bg-blue-700 disabled:opacity-50">
++          {saving ? '저장 중...' : (id ? '수정' : '추가')}
++        </button>
++        <button type="button" onClick={() => router.back()}
++          className="flex-1 border py-2 rounded hover:bg-gray-50">취소</button>
++      </div>
++    </form>
++  )
++}
+diff --git a/components/EmployeeTable.tsx b/components/EmployeeTable.tsx
+new file mode 100644
+index 0000000..b2ed623
+--- /dev/null
++++ b/components/EmployeeTable.tsx
+@@ -0,0 +1,55 @@
++'use client'
++import Link from 'next/link'
++
++type EmployeeRow = {
++  id: string; name: string; company: string; department: string; position: string
++  hireDate: string; terminationDate: string | null
++  periodStart: string; periodEnd: string
++  allocatedDays: number; bonusDays: number; deductionDays: number
++  usedDays: number; remainingDays: number
++}
++
++const COMPANY_LABEL: Record<string, string> = { SKYCAMP: '스카이캠프', SKYAN: '스카이앤' }
++const DEPT_LABEL: Record<string, string> = { SALES: '영업부', SALES_SUPPORT: '영업지원부' }
++
++export default function EmployeeTable({ employees }: { employees: EmployeeRow[] }) {
++  return (
++    <div className="overflow-x-auto">
++      <table className="min-w-full bg-white rounded-lg shadow text-sm">
++        <thead className="bg-gray-100">
++          <tr>
++            {['이름', '회사', '부서', '직책', '적용기간', '발생', '추가', '제외', '사용', '잔여'].map(h => (
++              <th key={h} className="px-3 py-2 text-left font-medium text-gray-600">{h}</th>
++            ))}
++          </tr>
++        </thead>
++        <tbody>
++          {employees.map(emp => (
++            <tr key={emp.id}
++              className={`border-t hover:bg-gray-50 ${emp.terminationDate ? 'opacity-50' : ''}`}>
++              <td className="px-3 py-2">
++                <Link href={`/employees/${emp.id}`} className="text-blue-600 hover:underline font-medium">
++                  {emp.name}{emp.terminationDate ? ' (퇴사)' : ''}
++                </Link>
++              </td>
++              <td className="px-3 py-2">{COMPANY_LABEL[emp.company]}</td>
++              <td className="px-3 py-2">{DEPT_LABEL[emp.department]}</td>
++              <td className="px-3 py-2">{emp.position}</td>
++              <td className="px-3 py-2 text-xs text-gray-500">
++                {new Date(emp.periodStart).toLocaleDateString('ko-KR')} ~{' '}
++                {new Date(emp.periodEnd).toLocaleDateString('ko-KR')}
++              </td>
++              <td className="px-3 py-2 text-center">{emp.allocatedDays}</td>
++              <td className="px-3 py-2 text-center">{emp.bonusDays}</td>
++              <td className="px-3 py-2 text-center">{emp.deductionDays}</td>
++              <td className="px-3 py-2 text-center">{emp.usedDays}</td>
++              <td className={`px-3 py-2 text-center font-semibold ${emp.remainingDays < 0 ? 'text-red-600' : ''}`}>
++                {emp.remainingDays}
++              </td>
++            </tr>
++          ))}
++        </tbody>
++      </table>
++    </div>
++  )
++}
+diff --git a/components/LeaveBalanceCard.tsx b/components/LeaveBalanceCard.tsx
+new file mode 100644
+index 0000000..aa9438e
+--- /dev/null
++++ b/components/LeaveBalanceCard.tsx
+@@ -0,0 +1,88 @@
++'use client'
++import { useState } from 'react'
++
++type Balance = {
++  id: string | null; periodStart: string; periodEnd: string
++  allocatedDays: number; allocatedDaysOverride: number | null
++  bonusDays: number; deductionDays: number; usedDays: number; remainingDays: number; note: string | null
++}
++
++export default function LeaveBalanceCard({ balance, employeeId, onUpdated }: {
++  balance: Balance; employeeId: string; onUpdated: () => void
++}) {
++  const [editing, setEditing] = useState(false)
++  const [override, setOverride] = useState(balance.allocatedDaysOverride?.toString() ?? '')
++  const [bonus, setBonus] = useState(balance.bonusDays.toString())
++  const [deduction, setDeduction] = useState(balance.deductionDays.toString())
++  const [note, setNote] = useState(balance.note ?? '')
++
++  async function save() {
++    await fetch(`/api/employees/${employeeId}`, {
++      method: 'PUT',
++      headers: { 'Content-Type': 'application/json' },
++      body: JSON.stringify({
++        allocatedDaysOverride: override !== '' ? parseFloat(override) : null,
++        bonusDays: parseFloat(bonus) || 0,
++        deductionDays: parseFloat(deduction) || 0,
++        balanceNote: note || null,
++      }),
++    })
++    setEditing(false)
++    onUpdated()
++  }
++
++  return (
++    <div className="bg-white rounded-lg shadow p-6">
++      <div className="flex justify-between items-center mb-4">
++        <h3 className="font-semibold text-lg">연차 현황</h3>
++        <button onClick={() => setEditing(!editing)}
++          className="text-sm text-blue-600 hover:underline">{editing ? '취소' : '수정'}</button>
++      </div>
++      <p className="text-sm text-gray-500 mb-4">
++        {new Date(balance.periodStart).toLocaleDateString('ko-KR')} ~{' '}
++        {new Date(balance.periodEnd).toLocaleDateString('ko-KR')}
++      </p>
++      {editing ? (
++        <div className="space-y-3">
++          <div>
++            <label className="text-sm font-medium">발생일수 (비우면 자동계산)</label>
++            <input type="number" step="0.5" value={override} onChange={e => setOverride(e.target.value)}
++              placeholder={`자동: ${balance.allocatedDays}`}
++              className="w-full border rounded px-3 py-2 mt-1" />
++          </div>
++          <div>
++            <label className="text-sm font-medium">추가일수</label>
++            <input type="number" step="0.5" value={bonus} onChange={e => setBonus(e.target.value)}
++              className="w-full border rounded px-3 py-2 mt-1" />
++          </div>
++          <div>
++            <label className="text-sm font-medium">제외일수</label>
++            <input type="number" step="0.5" value={deduction} onChange={e => setDeduction(e.target.value)}
++              className="w-full border rounded px-3 py-2 mt-1" />
++          </div>
++          <div>
++            <label className="text-sm font-medium">비고</label>
++            <input value={note} onChange={e => setNote(e.target.value)}
++              className="w-full border rounded px-3 py-2 mt-1" />
++          </div>
++          <button onClick={save} className="w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700">저장</button>
++        </div>
++      ) : (
++        <div className="grid grid-cols-3 gap-4 text-center">
++          {[
++            ['발생', balance.allocatedDays],
++            ['추가', balance.bonusDays],
++            ['제외', balance.deductionDays],
++            ['사용', balance.usedDays],
++            ['잔여', balance.remainingDays],
++          ].map(([label, val]) => (
++            <div key={label as string} className={`p-3 rounded ${label === '잔여' && (val as number) < 0 ? 'bg-red-50' : 'bg-gray-50'}`}>
++              <div className="text-xs text-gray-500">{label}</div>
++              <div className={`text-xl font-bold ${label === '잔여' && (val as number) < 0 ? 'text-red-600' : ''}`}>{val}</div>
++            </div>
++          ))}
++        </div>
++      )}
++    </div>
++  )
++}

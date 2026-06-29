@@ -8,10 +8,10 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    fetch('/api/employees').then(r => r.json()).then(d => {
-      setEmployees(d.employees)
-      setLoading(false)
-    })
+    fetch('/api/employees')
+      .then(r => r.json())
+      .then(d => { setEmployees(d.employees ?? []); setLoading(false) })
+      .catch(() => setLoading(false))
   }, [])
 
   async function handleExport() {

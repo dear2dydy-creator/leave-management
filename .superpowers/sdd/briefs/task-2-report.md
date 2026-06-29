@@ -27,3 +27,42 @@
 
 ## Concerns
 None. All steps from the brief completed successfully.
+
+---
+
+## Additional Fix: Layout metadata and SessionProvider split (2026-06-29)
+
+### Problem
+The root layout was marked `'use client'` to wrap with `SessionProvider`, but Next.js 14 client components cannot export `metadata`. The layout had no metadata export, removing the page title.
+
+### Solution
+Split into two files following Next.js 14 best practices:
+
+1. **Created `app/providers.tsx` (client component)**:
+   - Exports `Providers` component wrapping `SessionProvider`
+   - Marked with `'use client'`
+
+2. **Updated `app/layout.tsx` (server component)**:
+   - Removed `'use client'` directive
+   - Added `metadata` export with title "연월차 관리 시스템" and description
+   - Imports and uses `Providers` component to wrap children
+
+### Changes
+- `app/providers.tsx` — Created (11 lines)
+- `app/layout.tsx` — Refactored from client to server component with metadata
+
+### Build Result
+✓ **PASS** — `npm run build` completed successfully
+```
+✓ Compiled successfully
+✓ Generating static pages (6/6)
+Route (app)                              Size     First Load JS
+├ ○ /                                    5.35 kB        92.7 kB
+├ ○ /_not-found                          873 B          88.2 kB
+├ ƒ /api/auth/[...nextauth]              0 B                0 B
+└ ○ /login                               950 B          97.9 kB
++ First Load JS shared by all            87.3 kB
+```
+
+### Commit
+- `a0e024b` fix: split SessionProvider into client Providers component
