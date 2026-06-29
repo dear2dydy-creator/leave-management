@@ -12,22 +12,31 @@ export default function TardyModal({
   onClose: () => void
   onSaved: () => void
 }) {
-  const [date, setDate] = useState(new Date().toISOString().slice(0, 10))
-  const [dates, setDates] = useState('')
+  const today = new Date().toISOString().slice(0, 10)
+  const [date, setDate] = useState(today)
+  const [prevDate1, setPrevDate1] = useState(today)
+  const [prevDate2, setPrevDate2] = useState(today)
   const [saving, setSaving] = useState(false)
   const [result, setResult] = useState<{ deducted: boolean; newCount: number } | null>(null)
 
   const nextCount = tardyCount + 1
   const willDeduct = nextCount % 3 === 0
 
+  function formatDate(d: string) {
+    return d.replace(/-/g, '.')
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setSaving(true)
+    const note = willDeduct
+      ? `${formatDate(prevDate1)} / ${formatDate(prevDate2)} / ${formatDate(date)}`
+      : null
     try {
       const res = await fetch(`/api/employees/${employeeId}/tardy`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ date, note: dates || null }),
+        body: JSON.stringify({ date, note }),
       })
       if (!res.ok) {
         const msg = await res.json().catch(() => ({ error: '오류가 발생했습니다' }))
@@ -71,25 +80,32 @@ export default function TardyModal({
                 이번 기록으로 3회가 채워져 반차(0.5일)가 자동 차감됩니다.
               </p>
             )}
-            <div>
-              <label className="text-sm font-medium">지각 날짜</label>
-              <input
-                type="date"
-                value={date}
-                onChange={e => setDate(e.target.value)}
-                className="w-full border rounded px-3 py-2 mt-1"
-                required
-              />
-            </div>
-            <div>
-              <label className="text-sm font-medium">지각 날짜 목록 (비고)</label>
-              <input
-                value={dates}
-                onChange={e => setDates(e.target.value)}
-                placeholder="예: 6/1, 6/5, 6/10"
-                className="w-full border rounded px-3 py-2 mt-1"
-              />
-            </div>
+            {willDeduct ? (
+              <div className="space-y-2">
+                <p className="text-xs text-gray-500">차감되는 지각 3회 날짜를 입력하세요.</p>
+                <div>
+                  <label className="text-sm font-medium">1번째 지각일</label>
+                  <input type="date" value={prevDate1} onChange={e => setPrevDate1(e.target.value)}
+                    className="w-full border rounded px-3 py-2 mt-1" required />
+                </div>
+                <div>
+                  <label className="text-sm font-medium">2번째 지각일</label>
+                  <input type="date" value={prevDate2} onChange={e => setPrevDate2(e.target.value)}
+                    className="w-full border rounded px-3 py-2 mt-1" required />
+                </div>
+                <div>
+                  <label className="text-sm font-medium">3번째 지각일</label>
+                  <input type="date" value={date} onChange={e => setDate(e.target.value)}
+                    className="w-full border rounded px-3 py-2 mt-1" required />
+                </div>
+              </div>
+            ) : (
+              <div>
+                <label className="text-sm font-medium">지각 날짜</label>
+                <input type="date" value={date} onChange={e => setDate(e.target.value)}
+                  className="w-full border rounded px-3 py-2 mt-1" required />
+              </div>
+            )}
             <div className="flex gap-2 pt-2">
               <button
                 type="submit"
