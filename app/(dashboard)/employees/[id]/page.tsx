@@ -2,6 +2,9 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import LeaveBalanceCard from '@/components/LeaveBalanceCard'
+import LeaveRecordTable from '@/components/LeaveRecordTable'
+import LeaveRecordModal from '@/components/LeaveRecordModal'
+import TardyModal from '@/components/TardyModal'
 
 const COMPANY_LABEL: Record<string, string> = { SKYCAMP: '스카이캠프', SKYAN: '스카이앤' }
 const DEPT_LABEL: Record<string, string> = { SALES: '영업부', SALES_SUPPORT: '영업지원부' }
@@ -11,6 +14,10 @@ export default function EmployeeDetailPage() {
   const router = useRouter()
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [data, setData] = useState<any>(null)
+  const [showModal, setShowModal] = useState(false)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [editRecord, setEditRecord] = useState<any>(null)
+  const [showTardy, setShowTardy] = useState(false)
 
   const load = useCallback(() => {
     fetch(`/api/employees/${id}`).then(r => r.json()).then(setData)
@@ -20,7 +27,13 @@ export default function EmployeeDetailPage() {
 
   if (!data) return <p className="p-8">불러오는 중...</p>
 
-  const { employee, balance } = data
+  const { employee, balance, leaveRecords } = data
+
+  async function handleDelete(recordId: string) {
+    if (!confirm('삭제하시겠습니까?')) return
+    await fetch(`/api/employees/${id}/leave-records/${recordId}`, { method: 'DELETE' })
+    load()
+  }
 
   return (
     <div className="max-w-4xl space-y-6">
@@ -46,9 +59,47 @@ export default function EmployeeDetailPage() {
       <LeaveBalanceCard balance={balance} employeeId={id} onUpdated={load} />
 
       <div className="bg-white rounded-lg shadow p-6">
-        <h3 className="font-semibold text-lg mb-4">휴가 사용내역</h3>
-        <p className="text-sm text-gray-400">← Task 7에서 구현</p>
+        <div className="flex justify-between items-center mb-4">
+          <h3 className="font-semibold text-lg">휴가 사용내역</h3>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setShowTardy(true)}
+              className="px-3 py-1.5 border rounded text-sm hover:bg-gray-50"
+            >
+              지각 기록
+            </button>
+            <button
+              onClick={() => { setEditRecord(null); setShowModal(true) }}
+              className="px-3 py-1.5 bg-blue-600 text-white rounded text-sm hover:bg-blue-700"
+            >
+              + 추가
+            </button>
+          </div>
+        </div>
+        <LeaveRecordTable
+          records={leaveRecords ?? []}
+          onEdit={r => { setEditRecord(r); setShowModal(true) }}
+          onDelete={handleDelete}
+        />
       </div>
+
+      {showModal && (
+        <LeaveRecordModal
+          employeeId={id}
+          initial={editRecord}
+          onClose={() => setShowModal(false)}
+          onSaved={load}
+        />
+      )}
+
+      {showTardy && (
+        <TardyModal
+          employeeId={id}
+          tardyCount={employee.tardyCount}
+          onClose={() => setShowTardy(false)}
+          onSaved={load}
+        />
+      )}
     </div>
   )
 }
