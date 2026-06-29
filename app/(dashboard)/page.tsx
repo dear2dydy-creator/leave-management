@@ -38,7 +38,20 @@ export default function DashboardPage() {
           </Link>
         </div>
       </div>
-      {loading ? <p>불러오는 중...</p> : <EmployeeTable employees={employees} />}
+      {loading ? (
+        <p>불러오는 중...</p>
+      ) : (
+        <div className="space-y-8">
+          <section>
+            <h3 className="text-base font-semibold text-gray-700 mb-3">영업지원부</h3>
+            <EmployeeTable employees={employees.filter((e: any) => e.department === 'SALES_SUPPORT')} />
+          </section>
+          <section>
+            <h3 className="text-base font-semibold text-gray-700 mb-3">영업부</h3>
+            <EmployeeTable employees={employees.filter((e: any) => e.department === 'SALES')} />
+          </section>
+        </div>
+      )}
     </div>
   )
 }
