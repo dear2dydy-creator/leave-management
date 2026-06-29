@@ -3,7 +3,7 @@
 
 ## Tasks
 
-- [ ] Task 1: 프로젝트 초기 설정 & 데이터베이스 스키마
+- [x] Task 1: 프로젝트 초기 설정 & 데이터베이스 스키마 (commit: 72e9a47, review clean — FK false positive confirmed)
 - [ ] Task 2: 인증 (NextAuth.js)
 - [ ] Task 3: 연차 계산 로직 (TDD)
 - [ ] Task 4: 지각 처리 로직 (TDD)
