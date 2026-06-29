@@ -71,17 +71,22 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
   const { name, company, department, position, hireDate, terminationDate,
           allocatedDaysOverride, bonusDays, deductionDays, balanceNote } = body
 
-  const employee = await db.employee.update({
-    where: { id: params.id },
-    data: {
-      name,
-      company,
-      department,
-      position,
-      hireDate: new Date(hireDate),
-      terminationDate: terminationDate ? new Date(terminationDate) : null,
-    },
-  })
+  // Only update employee fields when they are provided (EmployeeForm sends them;
+  // LeaveBalanceCard only sends balance fields)
+  const employeeData: Record<string, unknown> = {}
+  if (name !== undefined) employeeData.name = name
+  if (company !== undefined) employeeData.company = company
+  if (department !== undefined) employeeData.department = department
+  if (position !== undefined) employeeData.position = position
+  if (hireDate !== undefined) employeeData.hireDate = new Date(hireDate)
+  if ('terminationDate' in body) {
+    employeeData.terminationDate = terminationDate ? new Date(terminationDate) : null
+  }
+
+  const hasEmployeeFields = Object.keys(employeeData).length > 0
+  const employee = hasEmployeeFields
+    ? await db.employee.update({ where: { id: params.id }, data: employeeData })
+    : await db.employee.findUniqueOrThrow({ where: { id: params.id } })
 
   if (allocatedDaysOverride !== undefined || bonusDays !== undefined || deductionDays !== undefined) {
     const today = new Date()
