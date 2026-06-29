@@ -6,28 +6,6 @@ export function calculateAnnualLeave(hireDate: Date, referenceDate: Date = new D
   return Math.min(15 + bonus, 25)
 }
 
-// 휴직 기간을 반영한 연차 계산 (영업지원부 전용)
-// PERSONAL 유형 휴직일수를 유효 근무기간에서 차감
-export function calculateAnnualLeaveWithAbsences(
-  hireDate: Date,
-  referenceDate: Date,
-  leaveOfAbsences: { startDate: Date; endDate: Date; type: string }[]
-): number {
-  const personalDays = leaveOfAbsences
-    .filter(l => l.type === 'PERSONAL')
-    .reduce((sum, l) => {
-      const s = l.startDate < hireDate ? hireDate : l.startDate
-      const e = l.endDate > referenceDate ? referenceDate : l.endDate
-      if (s >= e) return sum
-      return sum + Math.round((e.getTime() - s.getTime()) / 86400000)
-    }, 0)
-
-  const effectiveRef = new Date(referenceDate)
-  effectiveRef.setDate(effectiveRef.getDate() - personalDays)
-
-  return calculateAnnualLeave(hireDate, effectiveRef)
-}
-
 export function calculateMonthlyLeave(
   periodStart: Date,
   absenceDates: Date[],

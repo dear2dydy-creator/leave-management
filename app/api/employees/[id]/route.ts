@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { db } from '@/lib/db'
-import { calculateAnnualLeave, calculateAnnualLeaveWithAbsences, calculateMonthlyLeave, getCurrentPeriod } from '@/lib/leave-calculator'
+import { calculateAnnualLeave, calculateMonthlyLeave, getCurrentPeriod } from '@/lib/leave-calculator'
 import { Department } from '@prisma/client'
 
 export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
@@ -15,7 +15,6 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
       leaveBalances: true,
       leaveRecords: { orderBy: { startDate: 'desc' } },
       tardyRecords: { orderBy: { date: 'desc' } },
-      leaveOfAbsences: { orderBy: { startDate: 'desc' } },
     },
   })
   if (!employee) return NextResponse.json({ error: 'Not found' }, { status: 404 })
@@ -30,7 +29,7 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
 
   const allocatedDays = balance?.allocatedDaysOverride ??
     (employee.department === Department.SALES_SUPPORT
-      ? calculateAnnualLeaveWithAbsences(employee.hireDate, today, employee.leaveOfAbsences)
+      ? calculateAnnualLeave(employee.hireDate, today)
       : calculateMonthlyLeave(start, absenceDates, today))
 
   const usedDays = employee.leaveRecords
@@ -63,7 +62,6 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
     },
     leaveRecords: employee.leaveRecords,
     tardyRecords: employee.tardyRecords,
-    leaveOfAbsences: employee.leaveOfAbsences,
   })
 }
 
