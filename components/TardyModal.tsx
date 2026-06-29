@@ -14,8 +14,8 @@ export default function TardyModal({
 }) {
   const today = new Date().toISOString().slice(0, 10)
   const [date, setDate] = useState(today)
-  const [prevDate1, setPrevDate1] = useState(today)
-  const [prevDate2, setPrevDate2] = useState(today)
+  const [prevDate1, setPrevDate1] = useState('')
+  const [prevDate2, setPrevDate2] = useState('')
   const [saving, setSaving] = useState(false)
   const [result, setResult] = useState<{ deducted: boolean; newCount: number } | null>(null)
 
