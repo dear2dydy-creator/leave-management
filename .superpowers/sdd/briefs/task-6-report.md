@@ -32,3 +32,30 @@
 - Export button calls GET /api/export which returns 404 (Task 10 API — expected)
 - Edit button on detail page routes to `/employees/[id]/edit` (Task 7/8 extension)
 - No TardyModal imported (Task 8)
+
+---
+
+## Task 6 Fixes (Follow-up)
+
+### Fix 1: Create missing edit page
+- **File Created**: `app/(dashboard)/employees/[id]/edit/page.tsx`
+- **Purpose**: Handle the "수정" button route from detail page that was causing 404
+- **Implementation**: Fetches employee from API, maps hireDate/terminationDate to ISO strings, passes to EmployeeForm with `id` prop for edit mode
+- **ESLint**: Added `@typescript-eslint/no-explicit-any` disable comment to match project style
+
+### Fix 2: Dashboard fetch error handling
+- **File Modified**: `app/(dashboard)/page.tsx`
+- **Changes**:
+  - Added `.catch(() => setLoading(false))` to handle fetch failures gracefully
+  - Changed `setEmployees(d.employees)` to `setEmployees(d.employees ?? [])` for null-safety
+- **Impact**: Dashboard won't hang or show stale data if API fails
+
+### Build Result
+```
+✓ Build successful with zero TypeScript errors
+✓ All 9 routes compile cleanly (added /employees/[id]/edit)
+✓ Route optimization report shows dynamic route properly registered
+```
+
+### Commit
+- `b3106035216aa58b2b72c3c35629e5207ef7c658` fix: add employee edit page and dashboard fetch error handling
