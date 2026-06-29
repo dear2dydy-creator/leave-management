@@ -6,6 +6,7 @@ import LeaveRecordTable from '@/components/LeaveRecordTable'
 import LeaveRecordModal from '@/components/LeaveRecordModal'
 import TardyModal from '@/components/TardyModal'
 import TardyRecordTable from '@/components/TardyRecordTable'
+import LeaveOfAbsenceSection from '@/components/LeaveOfAbsenceSection'
 
 const COMPANY_LABEL: Record<string, string> = { SKYCAMP: '스카이캠프', SKYAN: '스카이앤' }
 const DEPT_LABEL: Record<string, string> = { SALES: '영업부', SALES_SUPPORT: '영업지원부' }
@@ -28,7 +29,7 @@ export default function EmployeeDetailPage() {
 
   if (!data) return <p className="p-8">불러오는 중...</p>
 
-  const { employee, balance, leaveRecords, tardyRecords } = data
+  const { employee, balance, leaveRecords, tardyRecords, leaveOfAbsences } = data
 
   async function handleDelete(recordId: string) {
     if (!confirm('삭제하시겠습니까?')) return
@@ -108,6 +109,14 @@ export default function EmployeeDetailPage() {
         records={tardyRecords ?? []}
         onDelete={handleTardyDelete}
       />
+
+      {employee.department === 'SALES_SUPPORT' && (
+        <LeaveOfAbsenceSection
+          employeeId={id}
+          records={leaveOfAbsences ?? []}
+          onChanged={load}
+        />
+      )}
 
       {showTardy && (
         <TardyModal

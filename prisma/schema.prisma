@@ -27,6 +27,11 @@ enum LeaveCategory {
   OTHER
 }
 
+enum LeaveOfAbsenceType {
+  DEEMED    // 출근 간주: 업무상재해, 육아휴직, 출산휴가
+  PERSONAL  // 개인/병가: 근속기간에서 제외
+}
+
 model Employee {
   id              String         @id @default(cuid())
   name            String
@@ -37,9 +42,10 @@ model Employee {
   terminationDate DateTime?
   tardyCount      Int            @default(0)
   createdAt       DateTime       @default(now())
-  leaveBalances   LeaveBalance[]
-  leaveRecords    LeaveRecord[]
-  tardyRecords    TardyRecord[]
+  leaveBalances    LeaveBalance[]
+  leaveRecords     LeaveRecord[]
+  tardyRecords     TardyRecord[]
+  leaveOfAbsences  LeaveOfAbsence[]
 
   @@map("employees")
 }
@@ -84,6 +90,19 @@ model TardyRecord {
   employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 
   @@map("tardy_records")
+}
+
+model LeaveOfAbsence {
+  id         String              @id @default(cuid())
+  employeeId String
+  startDate  DateTime
+  endDate    DateTime
+  type       LeaveOfAbsenceType
+  note       String?
+  createdAt  DateTime            @default(now())
+  employee   Employee            @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@map("leave_of_absences")
 }
 
 model AdminUser {
