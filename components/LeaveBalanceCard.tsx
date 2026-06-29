@@ -38,7 +38,7 @@ export default function LeaveBalanceCard({ balance, employeeId, onUpdated }: {
         <button onClick={() => setEditing(!editing)}
           className="text-sm text-blue-600 hover:underline">{editing ? '취소' : '수정'}</button>
       </div>
-      <p className="text-sm text-gray-500 mb-4">
+      <p className="text-sm text-gray-700 mb-4">
         {new Date(balance.periodStart).toLocaleDateString('ko-KR')} ~{' '}
         {new Date(balance.periodEnd).toLocaleDateString('ko-KR')}
       </p>
@@ -77,8 +77,8 @@ export default function LeaveBalanceCard({ balance, employeeId, onUpdated }: {
             ['잔여', balance.remainingDays],
           ].map(([label, val]) => (
             <div key={label as string} className={`p-3 rounded ${label === '잔여' && (val as number) < 0 ? 'bg-red-50' : 'bg-gray-50'}`}>
-              <div className="text-xs text-gray-500">{label}</div>
-              <div className={`text-xl font-bold ${label === '잔여' && (val as number) < 0 ? 'text-red-600' : ''}`}>{val}</div>
+              <div className="text-xs text-gray-600 mb-1">{label}</div>
+              <div className={`text-xl font-bold ${label === '잔여' && (val as number) < 0 ? 'text-red-600' : 'text-gray-900'}`}>{val}</div>
             </div>
           ))}
         </div>

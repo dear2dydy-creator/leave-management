@@ -47,13 +47,13 @@ export default function EmployeeDetailPage() {
         </div>
       </div>
 
-      <div className="bg-white rounded-lg shadow p-6 grid grid-cols-2 gap-4 text-sm">
-        <div><span className="text-gray-500">회사</span> {COMPANY_LABEL[employee.company]}</div>
-        <div><span className="text-gray-500">부서</span> {DEPT_LABEL[employee.department]}</div>
-        <div><span className="text-gray-500">직책</span> {employee.position}</div>
-        <div><span className="text-gray-500">지각 횟수</span> {employee.tardyCount}회</div>
-        <div><span className="text-gray-500">입사일</span> {new Date(employee.hireDate).toLocaleDateString('ko-KR')}</div>
-        <div><span className="text-gray-500">퇴사일</span> {employee.terminationDate ? new Date(employee.terminationDate).toLocaleDateString('ko-KR') : '-'}</div>
+      <div className="bg-white rounded-lg shadow p-6 grid grid-cols-2 gap-4 text-sm text-gray-900">
+        <div><span className="text-gray-500 mr-1">회사</span>{COMPANY_LABEL[employee.company]}</div>
+        <div><span className="text-gray-500 mr-1">부서</span>{DEPT_LABEL[employee.department]}</div>
+        <div><span className="text-gray-500 mr-1">직책</span>{employee.position}</div>
+        <div><span className="text-gray-500 mr-1">지각 횟수</span>{employee.tardyCount}회</div>
+        <div><span className="text-gray-500 mr-1">입사일</span>{new Date(employee.hireDate).toLocaleDateString('ko-KR')}</div>
+        <div><span className="text-gray-500 mr-1">퇴사일</span>{employee.terminationDate ? new Date(employee.terminationDate).toLocaleDateString('ko-KR') : '-'}</div>
       </div>
 
       <LeaveBalanceCard balance={balance} employeeId={id} onUpdated={load} />
