@@ -12,7 +12,7 @@ export default function DateInput({
   required?: boolean
   disabled?: boolean
 }) {
-  const parse = (v: string) => {
+  function parse(v: string) {
     const p = v ? v.split('-') : []
     return { y: p[0] ?? '', m: p[1] ?? '', d: p[2] ?? '' }
   }
@@ -24,18 +24,24 @@ export default function DateInput({
 
   const monthRef = useRef<HTMLInputElement>(null)
   const dayRef = useRef<HTMLInputElement>(null)
+  // track last value we emitted so useEffect ignores self-triggered updates
+  const lastEmitted = useRef(value)
 
-  // Sync when parent resets or changes value externally
   useEffect(() => {
-    const { y, m, d } = parse(value)
-    setYear(y)
-    setMonth(m)
-    setDay(d)
+    if (value !== lastEmitted.current) {
+      const { y, m, d } = parse(value)
+      setYear(y)
+      setMonth(m)
+      setDay(d)
+      lastEmitted.current = value
+    }
   }, [value])
 
   function tryEmit(y: string, m: string, d: string) {
     if (y.length === 4 && m.length >= 1 && d.length >= 1) {
-      onChange(`${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`)
+      const v = `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`
+      lastEmitted.current = v
+      onChange(v)
     }
   }
 
